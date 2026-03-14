@@ -159,29 +159,32 @@ def bots_from_config(config: dict) -> list[dict]:
 
     bots = []
 
-    # Main agent (Jarvis) — status based on gateway
-    bots.append({
-        "id": "jarvis",
-        "name": "Jarvis",
-        "role": "main",
-        "status": "online" if gateway_online else "offline",
-        "model": default_model,
-        "uptime": "—",
-        "requests_today": 0,
-        "last_active": "—",
-    })
-
-    # Sub-agents from agents.list
+    # All agents from agents.list
     agent_list = agents_config.get("list", [])
     for agent in agent_list:
         agent_id = agent.get("id", agent.get("name", "unknown")).lower().replace(" ", "-")
-        name = agent_id.capitalize()
+        is_main = agent_id == "main"
+
+        # Name: "Jarvis" for main, otherwise identity.name or capitalized id
+        if is_main:
+            name = "Jarvis"
+        else:
+            identity = agent.get("identity", {})
+            name = identity.get("name", agent_id.capitalize())
+
         model = _resolve_model(agent.get("model", default_model), default_model)
+
+        # Main agent status tied to gateway, subagents tied to ollama
+        if is_main:
+            status = "online" if gateway_online else "offline"
+        else:
+            status = "online" if ollama_online else "offline"
+
         bots.append({
             "id": agent_id,
             "name": name,
             "role": agent_id,
-            "status": "online" if ollama_online else "offline",
+            "status": status,
             "model": model,
             "uptime": "—",
             "requests_today": 0,
