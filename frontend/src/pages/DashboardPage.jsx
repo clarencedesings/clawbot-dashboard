@@ -23,6 +23,15 @@ export default function DashboardPage() {
       .catch(() => setSummary(null))
   }, [])
 
+  const formatModel = (m) => {
+    if (!m) return '—'
+    const lower = m.toLowerCase()
+    if (lower.includes('claude-sonnet')) return 'Claude Sonnet'
+    if (lower.includes('claude-opus')) return 'Claude Opus'
+    if (lower.includes('llama')) return 'Llama 3.1'
+    return m.includes('/') ? m.split('/').pop() : m
+  }
+
   const online = summary?.online_bots ?? bots.filter((b) => b.status === 'online').length
   const total = summary?.total_bots ?? bots.length
 
@@ -79,7 +88,7 @@ export default function DashboardPage() {
             Model
           </p>
           <p className="text-2xl font-bold text-white mt-1">
-            {summary?.model || '—'}
+            {formatModel(summary?.model)}
           </p>
         </div>
       </div>
