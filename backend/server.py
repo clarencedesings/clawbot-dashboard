@@ -694,6 +694,7 @@ async def dismiss_alert(alert_id: str):
 
 _DURATION_PATTERN = re.compile(r"durationMs=(\d+)")
 _MODEL_PATTERN = re.compile(r"model=([\w\-\.]+)")
+_RUNID_PATTERN = re.compile(r"runId=(\S+)")
 
 
 def ssh_read_token_usage() -> dict:
@@ -713,12 +714,8 @@ def ssh_read_token_usage() -> dict:
     except Exception:
         return _tokens_cache["data"] or _empty_token_data()
 
-    requests_total = 0
-    errors_total = 0
-    success_durations = []
-    hourly = {}  # hour_key -> count
-    recent_runs = []
-
+    # First pass: parse all lines into structured entries
+    parsed_lines = []
     for line in raw.strip().splitlines():
         line = line.strip()
         if not line:
@@ -732,37 +729,67 @@ def ssh_read_token_usage() -> dict:
             raw_ts = ""
 
         msg_lower = message.lower()
-
-        # Count embedded run starts as requests
         is_run_start = "embedded run" in msg_lower and ("registered" in msg_lower or "start" in msg_lower)
         is_run_done = "embedded run" in msg_lower and "done" in msg_lower
 
         if not is_run_start and not is_run_done and "provider=anthropic" not in msg_lower:
             continue
 
+        parsed_lines.append({
+            "message": message,
+            "msg_lower": msg_lower,
+            "raw_ts": raw_ts,
+            "is_run_start": is_run_start,
+            "is_run_done": is_run_done,
+        })
+
+    # Second pass: build runId → model mapping from start messages
+    run_models = {}  # runId -> model
+    run_start_ts = {}  # runId -> raw_ts
+    for entry in parsed_lines:
+        if entry["is_run_start"]:
+            rid_match = _RUNID_PATTERN.search(entry["message"])
+            model_match = _MODEL_PATTERN.search(entry["message"])
+            if rid_match:
+                run_id = rid_match.group(1)
+                run_models[run_id] = model_match.group(1) if model_match else "unknown"
+                run_start_ts[run_id] = entry["raw_ts"]
+
+    # Third pass: collect stats and build activity from done messages
+    requests_total = 0
+    errors_total = 0
+    success_durations = []
+    hourly = {}
+    recent_runs = []
+
+    for entry in parsed_lines:
+        message = entry["message"]
+        msg_lower = entry["msg_lower"]
+        raw_ts = entry["raw_ts"]
         dt = _parse_log_timestamp_dt(raw_ts)
         is_error = "iserror=true" in msg_lower and "iserror=false" not in msg_lower
 
-        if is_run_start or "provider=anthropic" in msg_lower:
+        if entry["is_run_start"] or "provider=anthropic" in msg_lower:
             requests_total += 1
             if dt:
                 hour_key = dt.strftime("%Y-%m-%d %H:00")
                 hourly[hour_key] = hourly.get(hour_key, 0) + 1
 
-        # Extract duration from done messages — only successful runs for avg
-        dur_match = _DURATION_PATTERN.search(message)
-        duration_ms = int(dur_match.group(1)) if dur_match else None
-
-        if is_run_done and duration_ms is not None and not is_error:
-            success_durations.append(duration_ms)
-
         if is_error:
             errors_total += 1
 
-        # Collect recent run events for activity table
-        if is_run_start or is_run_done:
-            model_match = _MODEL_PATTERN.search(message)
-            model = model_match.group(1) if model_match else "unknown"
+        # Build activity entries from done messages, matched with start data
+        if entry["is_run_done"]:
+            dur_match = _DURATION_PATTERN.search(message)
+            duration_ms = int(dur_match.group(1)) if dur_match else None
+
+            if duration_ms is not None and not is_error:
+                success_durations.append(duration_ms)
+
+            rid_match = _RUNID_PATTERN.search(message)
+            run_id = rid_match.group(1) if rid_match else None
+            model = run_models.get(run_id, "unknown") if run_id else "unknown"
+
             timestamp_display = _parse_log_timestamp(raw_ts) if raw_ts else "—"
             recent_runs.append({
                 "time": timestamp_display,
