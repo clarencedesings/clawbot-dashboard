@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
+from datetime import datetime, timezone
 import json
 import os
 import time
@@ -27,7 +28,14 @@ OPENCLAW_CONFIG_PATH = "/home/clarence/.openclaw/openclaw.json"
 
 # Cache for SSH reads
 _config_cache = {"data": None, "timestamp": 0}
-_status_cache = {"gateway": False, "ollama": False, "timestamp": 0}
+_status_cache = {
+    "gateway": False,
+    "ollama": False,
+    "gateway_uptime": "—",
+    "ollama_uptime": "—",
+    "last_active": "—",
+    "timestamp": 0,
+}
 CACHE_TTL = 30  # seconds
 
 MOCK_BOTS = [
@@ -88,6 +96,41 @@ def _ssh_connect():
     return client
 
 
+def _parse_systemd_timestamp(raw: str) -> datetime | None:
+    """Parse systemd ActiveEnterTimestamp like 'Thu 2026-03-11 02:14:33 UTC'."""
+    # Format: ActiveEnterTimestamp=Thu 2026-03-11 02:14:33 UTC
+    val = raw.split("=", 1)[-1].strip()
+    if not val or val == "n/a":
+        return None
+    try:
+        # Strip day-of-week prefix (e.g. "Thu ")
+        parts = val.split(" ", 1)
+        if len(parts) == 2 and len(parts[0]) <= 3:
+            val = parts[1]
+        # Parse "2026-03-11 02:14:33 UTC"
+        return datetime.strptime(val, "%Y-%m-%d %H:%M:%S %Z").replace(tzinfo=timezone.utc)
+    except (ValueError, IndexError):
+        return None
+
+
+def _format_uptime(start: datetime | None) -> str:
+    """Format a start timestamp as human-readable uptime."""
+    if start is None:
+        return "—"
+    delta = datetime.now(timezone.utc) - start
+    total_seconds = int(delta.total_seconds())
+    if total_seconds < 0:
+        return "—"
+    days = total_seconds // 86400
+    hours = (total_seconds % 86400) // 3600
+    minutes = (total_seconds % 3600) // 60
+    if days > 0:
+        return f"{days}d {hours}h {minutes}m"
+    if hours > 0:
+        return f"{hours}h {minutes}m"
+    return f"{minutes}m"
+
+
 def ssh_read_openclaw_config() -> dict | None:
     """Read openclaw.json from Clawbot via SSH, cached for 30 seconds."""
     now = time.time()
@@ -109,7 +152,7 @@ def ssh_read_openclaw_config() -> dict | None:
 
 
 def ssh_check_services() -> dict:
-    """Check gateway port 18789 and ollama status on Clawbot via SSH, cached."""
+    """Check gateway/ollama status, uptimes, and last log activity via SSH."""
     now = time.time()
     if (now - _status_cache["timestamp"]) < CACHE_TTL:
         return _status_cache
@@ -125,10 +168,57 @@ def ssh_check_services() -> dict:
         _, stdout_ol, _ = client.exec_command("pgrep ollama")
         ollama_online = len(stdout_ol.read().decode("utf-8").strip()) > 0
 
+        # Gateway service uptime
+        _, stdout_gw_ts, _ = client.exec_command(
+            "systemctl --user show openclaw-gateway.service --property=ActiveEnterTimestamp"
+        )
+        gw_ts = _parse_systemd_timestamp(stdout_gw_ts.read().decode("utf-8"))
+        gateway_uptime = _format_uptime(gw_ts) if gateway_online else "—"
+
+        # Ollama service uptime
+        _, stdout_ol_ts, _ = client.exec_command(
+            "systemctl --user show ollama.service --property=ActiveEnterTimestamp"
+        )
+        ol_ts = _parse_systemd_timestamp(stdout_ol_ts.read().decode("utf-8"))
+        ollama_uptime = _format_uptime(ol_ts) if ollama_online else "—"
+
+        # Last active: read last line of most recent openclaw log
+        _, stdout_log, _ = client.exec_command(
+            "ls -t /tmp/openclaw/openclaw-*.log 2>/dev/null | head -1 | xargs -r tail -1"
+        )
+        last_log_line = stdout_log.read().decode("utf-8").strip()
+        last_active = "—"
+        if last_log_line:
+            # Try to extract timestamp from beginning of log line
+            try:
+                # Common log formats: "2026-03-12 14:22:01 ..." or "[2026-03-12T14:22:01] ..."
+                ts_str = last_log_line[:19].strip("[]")
+                for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
+                    try:
+                        log_dt = datetime.strptime(ts_str, fmt).replace(tzinfo=timezone.utc)
+                        delta = datetime.now(timezone.utc) - log_dt
+                        total_min = int(delta.total_seconds()) // 60
+                        if total_min < 1:
+                            last_active = "just now"
+                        elif total_min < 60:
+                            last_active = f"{total_min}m ago"
+                        elif total_min < 1440:
+                            last_active = f"{total_min // 60}h ago"
+                        else:
+                            last_active = f"{total_min // 1440}d ago"
+                        break
+                    except ValueError:
+                        continue
+            except Exception:
+                pass
+
         client.close()
 
         _status_cache["gateway"] = gateway_online
         _status_cache["ollama"] = ollama_online
+        _status_cache["gateway_uptime"] = gateway_uptime
+        _status_cache["ollama_uptime"] = ollama_uptime
+        _status_cache["last_active"] = last_active
         _status_cache["timestamp"] = now
         return _status_cache
     except Exception:
@@ -177,8 +267,12 @@ def bots_from_config(config: dict) -> list[dict]:
         # Main agent status tied to gateway, subagents tied to ollama
         if is_main:
             status = "online" if gateway_online else "offline"
+            uptime = services["gateway_uptime"]
+            last_active = services["last_active"]
         else:
             status = "online" if ollama_online else "offline"
+            uptime = services["ollama_uptime"]
+            last_active = "—"
 
         bots.append({
             "id": agent_id,
@@ -186,9 +280,9 @@ def bots_from_config(config: dict) -> list[dict]:
             "role": agent_id,
             "status": status,
             "model": model,
-            "uptime": "—",
+            "uptime": uptime,
             "requests_today": 0,
-            "last_active": "—",
+            "last_active": last_active,
         })
 
     return bots
@@ -235,8 +329,13 @@ async def dashboard_summary():
     config = ssh_read_openclaw_config()
     if config:
         bots = bots_from_config(config)
+        agents_config = config.get("agents", {})
+        model = _resolve_model(
+            agents_config.get("defaults", {}).get("model", {}), "unknown"
+        )
     else:
         bots = MOCK_BOTS
+        model = "unknown"
 
     online_count = sum(1 for b in bots if b["status"] == "online")
     services = ssh_check_services()
@@ -244,6 +343,7 @@ async def dashboard_summary():
         "total_bots": len(bots),
         "online_bots": online_count,
         "gateway_online": services["gateway"],
+        "model": model,
     }
 
 
