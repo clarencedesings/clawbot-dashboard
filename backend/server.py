@@ -118,9 +118,13 @@ def bots_from_config(config: dict) -> list[dict]:
 
     bots = []
 
-    # Main agent (Jarvis) — uses agents.defaults.model
+    # Main agent (Jarvis) — uses agents.defaults.model.primary
     defaults = config.get("agents", {}).get("defaults", {})
-    default_model = defaults.get("model", "unknown")
+    default_model = defaults.get("model", {})
+    if isinstance(default_model, dict):
+        default_model = default_model.get("primary", "unknown")
+    if not isinstance(default_model, str):
+        default_model = "unknown"
     bots.append({
         "id": "jarvis",
         "name": "Jarvis",
@@ -139,6 +143,8 @@ def bots_from_config(config: dict) -> list[dict]:
         identity = agent.get("identity", {})
         name = identity.get("name", agent.get("name", agent_id.capitalize()))
         model = agent.get("model", default_model)
+        if isinstance(model, dict):
+            model = model.get("primary", default_model)
         bots.append({
             "id": agent_id,
             "name": name,
