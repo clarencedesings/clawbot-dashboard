@@ -1,4 +1,5 @@
-from fastapi import FastAPI
+import re
+from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from datetime import datetime, timezone
@@ -37,6 +38,8 @@ _status_cache = {
     "timestamp": 0,
 }
 CACHE_TTL = 30  # seconds
+_logs_cache = {"data": [], "timestamp": 0}
+LOGS_CACHE_TTL = 10  # seconds
 
 MOCK_BOTS = [
     {
@@ -345,6 +348,83 @@ async def dashboard_summary():
         "gateway_online": services["gateway"],
         "model": model,
     }
+
+
+# Log line pattern: tries common formats
+# "2026-03-12 14:22:01 [INFO] [gateway] Message here"
+# "2026-03-12T14:22:01 INFO telegram: Message here"
+# "[2026-03-12 14:22:01] INFO gateway Message here"
+_LOG_PATTERN = re.compile(
+    r"[\[]*"
+    r"(?P<timestamp>\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})"
+    r"[\]]*\s*"
+    r"[\[]*(?P<level>INFO|WARN|WARNING|ERROR|DEBUG)[\]]*\s*"
+    r"[\[]*(?P<source>\w+)[\]:]*\s*"
+    r"(?P<message>.*)"
+)
+
+
+def ssh_read_logs() -> list[dict]:
+    """Read last 200 lines from the most recent openclaw log via SSH, cached 10s."""
+    now = time.time()
+    if _logs_cache["data"] and (now - _logs_cache["timestamp"]) < LOGS_CACHE_TTL:
+        return _logs_cache["data"]
+
+    try:
+        client = _ssh_connect()
+        _, stdout, _ = client.exec_command(
+            "ls -t /tmp/openclaw/openclaw-*.log 2>/dev/null | head -1 | xargs -r tail -200"
+        )
+        raw = stdout.read().decode("utf-8", errors="replace")
+        client.close()
+
+        entries = []
+        for line in raw.strip().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            m = _LOG_PATTERN.match(line)
+            if m:
+                level = m.group("level").upper()
+                if level == "WARNING":
+                    level = "WARN"
+                entries.append({
+                    "timestamp": m.group("timestamp"),
+                    "level": level,
+                    "source": m.group("source").lower(),
+                    "message": m.group("message").strip(),
+                })
+            else:
+                # Unparseable line — include as INFO/unknown
+                entries.append({
+                    "timestamp": "",
+                    "level": "INFO",
+                    "source": "unknown",
+                    "message": line,
+                })
+
+        # Newest first
+        entries.reverse()
+        _logs_cache["data"] = entries
+        _logs_cache["timestamp"] = now
+        return entries
+    except Exception:
+        return _logs_cache["data"]
+
+
+@app.get("/api/logs")
+async def get_logs(
+    level: str | None = Query(None),
+    source: str | None = Query(None),
+):
+    entries = ssh_read_logs()
+    if level:
+        level_upper = level.upper()
+        entries = [e for e in entries if e["level"] == level_upper]
+    if source:
+        source_lower = source.lower()
+        entries = [e for e in entries if e["source"] == source_lower]
+    return {"logs": entries}
 
 
 @app.get("/api/openclaw/config")
