@@ -350,18 +350,62 @@ async def dashboard_summary():
     }
 
 
-# Log line pattern: tries common formats
-# "2026-03-12 14:22:01 [INFO] [gateway] Message here"
-# "2026-03-12T14:22:01 INFO telegram: Message here"
-# "[2026-03-12 14:22:01] INFO gateway Message here"
-_LOG_PATTERN = re.compile(
-    r"[\[]*"
-    r"(?P<timestamp>\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2})"
-    r"[\]]*\s*"
-    r"[\[]*(?P<level>INFO|WARN|WARNING|ERROR|DEBUG)[\]]*\s*"
-    r"[\[]*(?P<source>\w+)[\]:]*\s*"
-    r"(?P<message>.*)"
-)
+def _parse_log_timestamp(raw_ts: str) -> str:
+    """Parse a timestamp string and return HH:MM:SS format."""
+    if not raw_ts:
+        return ""
+    for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ",
+                "%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S",
+                "%Y-%m-%d %H:%M:%S"):
+        try:
+            dt = datetime.strptime(raw_ts[:26].rstrip("Z"), fmt.rstrip("Z"))
+            return dt.strftime("%H:%M:%S")
+        except ValueError:
+            continue
+    # Last resort: look for HH:MM:SS pattern in the string
+    m = re.search(r"(\d{2}:\d{2}:\d{2})", raw_ts)
+    return m.group(1) if m else raw_ts[:8]
+
+
+def _parse_log_line(line: str) -> dict:
+    """Parse a single log line — expects JSON, falls back to plain text."""
+    try:
+        obj = json.loads(line)
+    except (json.JSONDecodeError, ValueError):
+        return {
+            "timestamp": "",
+            "level": "INFO",
+            "source": "unknown",
+            "message": line,
+        }
+
+    # Timestamp from "time" or "date" field
+    raw_ts = obj.get("time", obj.get("date", ""))
+    timestamp = _parse_log_timestamp(str(raw_ts))
+
+    # Level from "logLevelName"
+    level = str(obj.get("logLevelName", "INFO")).upper()
+    if level == "WARNING":
+        level = "WARN"
+    if level not in ("INFO", "WARN", "ERROR", "DEBUG"):
+        level = "INFO"
+
+    # Source from "subsystem" — may be dict or string
+    subsystem = obj.get("subsystem", "unknown")
+    if isinstance(subsystem, dict):
+        source = subsystem.get("subsystem", subsystem.get("name", "unknown"))
+    else:
+        source = str(subsystem)
+
+    # Message from "1" field (human-readable message)
+    message = str(obj.get("1", obj.get("message", obj.get("msg", ""))))
+
+    return {
+        "timestamp": timestamp,
+        "level": level,
+        "source": source.lower(),
+        "message": message,
+    }
 
 
 def ssh_read_logs() -> list[dict]:
@@ -383,25 +427,7 @@ def ssh_read_logs() -> list[dict]:
             line = line.strip()
             if not line:
                 continue
-            m = _LOG_PATTERN.match(line)
-            if m:
-                level = m.group("level").upper()
-                if level == "WARNING":
-                    level = "WARN"
-                entries.append({
-                    "timestamp": m.group("timestamp"),
-                    "level": level,
-                    "source": m.group("source").lower(),
-                    "message": m.group("message").strip(),
-                })
-            else:
-                # Unparseable line — include as INFO/unknown
-                entries.append({
-                    "timestamp": "",
-                    "level": "INFO",
-                    "source": "unknown",
-                    "message": line,
-                })
+            entries.append(_parse_log_line(line))
 
         # Newest first
         entries.reverse()
