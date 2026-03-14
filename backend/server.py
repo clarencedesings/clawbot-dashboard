@@ -370,16 +370,39 @@ def _parse_log_timestamp(raw_ts: str) -> str:
 _LEVEL_ID_MAP = {1: "FATAL", 2: "ERROR", 3: "WARN", 4: "INFO", 5: "DEBUG", 6: "TRACE"}
 _VALID_LEVELS = {"FATAL", "ERROR", "WARN", "INFO", "DEBUG", "TRACE"}
 
+# Source detection rules: (keywords, source_label, force_level or None)
+_SOURCE_RULES = [
+    (("rate_limit", "credit balance", "authentication_error", "401", "429"), "error", "ERROR"),
+    (("telegram",), "telegram", None),
+    (("embedded run", "run registered", "run cleared", "lane"), "agent", None),
+    (("gateway", "listening on ws", "canvas"), "gateway", None),
+    (("heartbeat", "started (interval"), "heartbeat", None),
+    (("config", "hot reload"), "config", None),
+    (("sigterm", "shutting down"), "system", None),
+]
+
+
+def _infer_source(message: str) -> tuple[str, str | None]:
+    """Infer source and optional forced level from message content."""
+    msg_lower = message.lower()
+    for keywords, source, forced_level in _SOURCE_RULES:
+        for kw in keywords:
+            if kw in msg_lower:
+                return source, forced_level
+    return "system", None
+
 
 def _parse_log_line(line: str) -> dict:
     """Parse a single log line — expects JSON, falls back to plain text."""
     try:
         obj = json.loads(line)
     except (json.JSONDecodeError, ValueError):
+        source, forced_level = _infer_source(line)
+        level = forced_level or ("ERROR" if "error" in line.lower() else "INFO")
         return {
             "timestamp": "",
-            "level": "INFO",
-            "source": "unknown",
+            "level": level,
+            "source": source,
             "message": line,
         }
 
@@ -400,31 +423,22 @@ def _parse_log_line(line: str) -> dict:
     else:
         level = "INFO"
 
-    # Source from "subsystem" — may be JSON string like '{"subsystem":"gateway/channels/telegram"}'
-    subsystem = obj.get("subsystem", "unknown")
-    if isinstance(subsystem, str):
-        # May be a nested JSON string
-        try:
-            parsed = json.loads(subsystem)
-            if isinstance(parsed, dict):
-                subsystem = parsed.get("subsystem", parsed.get("name", "unknown"))
-            else:
-                subsystem = str(parsed)
-        except (json.JSONDecodeError, ValueError):
-            pass  # already a plain string
-    elif isinstance(subsystem, dict):
-        subsystem = subsystem.get("subsystem", subsystem.get("name", "unknown"))
-
-    # Extract last segment after "/" for readable label
-    source = str(subsystem).rsplit("/", 1)[-1]
-
     # Message from "1" field (human-readable message)
     message = str(obj.get("1", obj.get("message", obj.get("msg", ""))))
+
+    # Infer source from message content
+    source, forced_level = _infer_source(message)
+    if forced_level:
+        level = forced_level
+
+    # Any message containing "error" should be ERROR
+    if "error" in message.lower() and level not in ("ERROR", "FATAL"):
+        level = "ERROR"
 
     return {
         "timestamp": timestamp,
         "level": level,
-        "source": source.lower(),
+        "source": source,
         "message": message,
     }
 
