@@ -694,7 +694,7 @@ async def dismiss_alert(alert_id: str):
 
 _DURATION_PATTERN = re.compile(r"durationMs=(\d+)")
 _MODEL_PATTERN = re.compile(r"model=([\w\-\.]+)")
-_RUNID_PATTERN = re.compile(r"runId=(\S+)")
+_RUNID_PATTERN = re.compile(r"runId=([\w\-]+)")
 
 
 def ssh_read_token_usage() -> dict:
@@ -729,8 +729,8 @@ def ssh_read_token_usage() -> dict:
             raw_ts = ""
 
         msg_lower = message.lower()
-        is_run_start = "embedded run" in msg_lower and ("registered" in msg_lower or "start" in msg_lower)
-        is_run_done = "embedded run" in msg_lower and "done" in msg_lower
+        is_run_start = "embedded run start" in msg_lower or ("embedded run" in msg_lower and "registered" in msg_lower)
+        is_run_done = "embedded run done" in msg_lower
 
         if not is_run_start and not is_run_done and "provider=anthropic" not in msg_lower:
             continue
