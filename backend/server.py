@@ -46,6 +46,10 @@ _alerts_cache = {"data": [], "timestamp": 0}
 ALERTS_CACHE_TTL = 30  # seconds
 _tokens_cache = {"data": None, "timestamp": 0}
 TOKENS_CACHE_TTL = 30  # seconds
+_memory_cache = {"data": None, "timestamp": 0}
+MEMORY_CACHE_TTL = 60  # seconds
+MEMORY_DIR = "/home/clarence/.openclaw/agents/main/memory"
+SESSIONS_DIR = "/home/clarence/.openclaw/agents/main/sessions"
 DISMISSED_ALERTS_FILE = Path(__file__).parent / "dismissed_alerts.json"
 
 MOCK_BOTS = [
@@ -819,6 +823,111 @@ def _empty_token_data() -> dict:
 @app.get("/api/tokens")
 async def get_tokens():
     return ssh_read_token_usage()
+
+
+def ssh_read_memory() -> dict:
+    """Read memory files from CLAWBOT via SSH, cached 60s."""
+    now = time.time()
+    if _memory_cache["data"] is not None and (now - _memory_cache["timestamp"]) < MEMORY_CACHE_TTL:
+        return _memory_cache["data"]
+
+    try:
+        client = _ssh_connect()
+
+        # List memory files with details
+        _, stdout_ls, _ = client.exec_command(
+            f"ls -la --time-style=long-iso {MEMORY_DIR}/*.md {MEMORY_DIR}/*.txt 2>/dev/null"
+        )
+        ls_output = stdout_ls.read().decode("utf-8", errors="replace").strip()
+
+        # Count sessions
+        _, stdout_sess, _ = client.exec_command(
+            f"ls -1 {SESSIONS_DIR}/ 2>/dev/null | wc -l"
+        )
+        session_count = int(stdout_sess.read().decode("utf-8").strip() or "0")
+
+        entries = []
+        total_size = 0
+
+        for line in ls_output.splitlines():
+            # Parse ls -la output: -rw-r--r-- 1 user group 1234 2026-03-12 14:22 /path/file.md
+            parts = line.split()
+            if len(parts) < 8:
+                continue
+            try:
+                size = int(parts[4])
+                date_str = parts[5]
+                time_str = parts[6]
+                filepath = parts[-1]
+                filename = filepath.rsplit("/", 1)[-1]
+            except (ValueError, IndexError):
+                continue
+
+            # Read file contents
+            _, stdout_cat, _ = client.exec_command(f"cat '{filepath}'")
+            content = stdout_cat.read().decode("utf-8", errors="replace")
+
+            total_size += size
+            entries.append({
+                "filename": filename,
+                "content": content,
+                "size": size,
+                "last_modified": f"{date_str} {time_str}",
+            })
+
+        client.close()
+
+        # Sort by last_modified descending
+        entries.sort(key=lambda e: e["last_modified"], reverse=True)
+
+        result = {
+            "entries": entries,
+            "total_files": len(entries),
+            "total_size": total_size,
+            "session_count": session_count,
+            "last_updated": entries[0]["last_modified"] if entries else "—",
+        }
+
+        _memory_cache["data"] = result
+        _memory_cache["timestamp"] = now
+        return result
+    except Exception:
+        return _memory_cache["data"] or {
+            "entries": [],
+            "total_files": 0,
+            "total_size": 0,
+            "session_count": 0,
+            "last_updated": "—",
+        }
+
+
+@app.get("/api/memory")
+async def get_memory():
+    return ssh_read_memory()
+
+
+@app.delete("/api/memory/{filename}")
+async def delete_memory(filename: str):
+    # Sanitize filename to prevent path traversal
+    safe_name = Path(filename).name
+    if safe_name != filename or ".." in filename or "/" in filename:
+        return {"error": "Invalid filename"}, 400
+
+    try:
+        client = _ssh_connect()
+        _, stdout, stderr = client.exec_command(f"rm -f '{MEMORY_DIR}/{safe_name}'")
+        stdout.read()
+        err = stderr.read().decode("utf-8").strip()
+        client.close()
+
+        # Clear cache
+        _memory_cache["timestamp"] = 0
+
+        if err:
+            return {"error": err}
+        return {"status": "deleted", "filename": safe_name}
+    except Exception as e:
+        return {"error": str(e)}
 
 
 @app.get("/api/openclaw/config")
