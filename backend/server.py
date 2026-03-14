@@ -693,7 +693,7 @@ async def dismiss_alert(alert_id: str):
 
 
 _DURATION_PATTERN = re.compile(r"durationMs=(\d+)")
-_MODEL_PATTERN = re.compile(r"model=([\w.:\-/]+)")
+_MODEL_PATTERN = re.compile(r"model=([\w\-\.]+)")
 
 
 def ssh_read_token_usage() -> dict:
@@ -762,7 +762,7 @@ def ssh_read_token_usage() -> dict:
         # Collect recent run events for activity table
         if is_run_start or is_run_done:
             model_match = _MODEL_PATTERN.search(message)
-            model = model_match.group(1) if model_match else "—"
+            model = model_match.group(1) if model_match else "unknown"
             timestamp_display = _parse_log_timestamp(raw_ts) if raw_ts else "—"
             recent_runs.append({
                 "time": timestamp_display,
