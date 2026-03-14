@@ -48,7 +48,16 @@ _tokens_cache = {"data": None, "timestamp": 0}
 TOKENS_CACHE_TTL = 30  # seconds
 _memory_cache = {"data": None, "timestamp": 0}
 MEMORY_CACHE_TTL = 60  # seconds
-MEMORY_DIR = "/home/clarence/.openclaw/agents/main/memory"
+MEMORY_FILES = [
+    "/home/clarence/.openclaw/agents/main/USER.md",
+    "/home/clarence/.openclaw/agents/main/agent/IDENTITY.md",
+    "/home/clarence/.openclaw/agents/business/agent/IDENTITY.md",
+    "/home/clarence/.openclaw/agents/research/agent/IDENTITY.md",
+    "/home/clarence/.openclaw/agents/coder/agent/IDENTITY.md",
+    "/home/clarence/.openclaw/workspace-coder/USER.md",
+    "/home/clarence/.openclaw/workspace-coder/IDENTITY.md",
+    "/home/clarence/.openclaw/workspace-coder/SOUL.md",
+]
 SESSIONS_DIR = "/home/clarence/.openclaw/agents/main/sessions"
 DISMISSED_ALERTS_FILE = Path(__file__).parent / "dismissed_alerts.json"
 
@@ -826,19 +835,13 @@ async def get_tokens():
 
 
 def ssh_read_memory() -> dict:
-    """Read memory files from CLAWBOT via SSH, cached 60s."""
+    """Read specific memory files from CLAWBOT via SSH, cached 60s."""
     now = time.time()
     if _memory_cache["data"] is not None and (now - _memory_cache["timestamp"]) < MEMORY_CACHE_TTL:
         return _memory_cache["data"]
 
     try:
         client = _ssh_connect()
-
-        # List memory files with details
-        _, stdout_ls, _ = client.exec_command(
-            f"ls -la --time-style=long-iso {MEMORY_DIR}/*.md {MEMORY_DIR}/*.txt 2>/dev/null"
-        )
-        ls_output = stdout_ls.read().decode("utf-8", errors="replace").strip()
 
         # Count sessions
         _, stdout_sess, _ = client.exec_command(
@@ -849,35 +852,40 @@ def ssh_read_memory() -> dict:
         entries = []
         total_size = 0
 
-        for line in ls_output.splitlines():
-            # Parse ls -la output: -rw-r--r-- 1 user group 1234 2026-03-12 14:22 /path/file.md
-            parts = line.split()
-            if len(parts) < 8:
-                continue
+        for filepath in MEMORY_FILES:
+            # Get file stat and content in one go
+            _, stdout_stat, _ = client.exec_command(
+                f"stat --format='%s %Y' '{filepath}' 2>/dev/null"
+            )
+            stat_output = stdout_stat.read().decode("utf-8").strip()
+            if not stat_output:
+                continue  # file doesn't exist
+
             try:
-                size = int(parts[4])
-                date_str = parts[5]
-                time_str = parts[6]
-                filepath = parts[-1]
-                filename = filepath.rsplit("/", 1)[-1]
+                size_str, mtime_str = stat_output.split()
+                size = int(size_str)
+                mtime = datetime.fromtimestamp(int(mtime_str), tz=timezone.utc)
+                last_modified = mtime.strftime("%Y-%m-%d %H:%M")
             except (ValueError, IndexError):
                 continue
 
-            # Read file contents
             _, stdout_cat, _ = client.exec_command(f"cat '{filepath}'")
             content = stdout_cat.read().decode("utf-8", errors="replace")
+
+            # Use last two path segments as filename, e.g. "main/USER.md"
+            parts = filepath.rstrip("/").split("/")
+            filename = "/".join(parts[-2:]) if len(parts) >= 2 else parts[-1]
 
             total_size += size
             entries.append({
                 "filename": filename,
                 "content": content,
                 "size": size,
-                "last_modified": f"{date_str} {time_str}",
+                "last_modified": last_modified,
             })
 
         client.close()
 
-        # Sort by last_modified descending
         entries.sort(key=lambda e: e["last_modified"], reverse=True)
 
         result = {
@@ -906,26 +914,36 @@ async def get_memory():
     return ssh_read_memory()
 
 
-@app.delete("/api/memory/{filename}")
+@app.delete("/api/memory/{filename:path}")
 async def delete_memory(filename: str):
-    # Sanitize filename to prevent path traversal
-    safe_name = Path(filename).name
-    if safe_name != filename or ".." in filename or "/" in filename:
+    # Only allow deleting files that are in our known list
+    if ".." in filename:
         return {"error": "Invalid filename"}, 400
+
+    # Find matching file from MEMORY_FILES
+    matched = None
+    for filepath in MEMORY_FILES:
+        parts = filepath.rstrip("/").split("/")
+        short_name = "/".join(parts[-2:])
+        if short_name == filename:
+            matched = filepath
+            break
+
+    if not matched:
+        return {"error": "File not in allowed list"}, 400
 
     try:
         client = _ssh_connect()
-        _, stdout, stderr = client.exec_command(f"rm -f '{MEMORY_DIR}/{safe_name}'")
+        _, stdout, stderr = client.exec_command(f"rm -f '{matched}'")
         stdout.read()
         err = stderr.read().decode("utf-8").strip()
         client.close()
 
-        # Clear cache
         _memory_cache["timestamp"] = 0
 
         if err:
             return {"error": err}
-        return {"status": "deleted", "filename": safe_name}
+        return {"status": "deleted", "filename": filename}
     except Exception as e:
         return {"error": str(e)}
 
