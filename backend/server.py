@@ -370,26 +370,42 @@ def _parse_log_timestamp(raw_ts: str) -> str:
 _LEVEL_ID_MAP = {1: "FATAL", 2: "ERROR", 3: "WARN", 4: "INFO", 5: "DEBUG", 6: "TRACE"}
 _VALID_LEVELS = {"FATAL", "ERROR", "WARN", "INFO", "DEBUG", "TRACE"}
 
-# Source detection rules: (keywords, source_label, force_level or None)
+# Source detection rules: (keywords, source_label)
 _SOURCE_RULES = [
-    (("rate_limit", "credit balance", "authentication_error", "401", "429"), "error", "ERROR"),
-    (("telegram",), "telegram", None),
-    (("embedded run", "run registered", "run cleared", "lane"), "agent", None),
-    (("gateway", "listening on ws", "canvas"), "gateway", None),
-    (("heartbeat", "started (interval"), "heartbeat", None),
-    (("config", "hot reload"), "config", None),
-    (("sigterm", "shutting down"), "system", None),
+    (("telegram",), "telegram"),
+    (("embedded run", "run registered", "run cleared", "lane"), "agent"),
+    (("gateway", "listening on ws", "canvas"), "gateway"),
+    (("heartbeat", "started (interval"), "heartbeat"),
+    (("config", "hot reload"), "config"),
+    (("sigterm", "shutting down"), "system"),
 ]
 
+# Patterns that indicate a real error
+_ERROR_PATTERN = re.compile(
+    r"isError=true|rate_limit_error|authentication_error|credit balance is too low|HTTP 4\d\d",
+    re.IGNORECASE,
+)
 
-def _infer_source(message: str) -> tuple[str, str | None]:
-    """Infer source and optional forced level from message content."""
+
+def _infer_source(message: str) -> str:
+    """Infer source from message content."""
     msg_lower = message.lower()
-    for keywords, source, forced_level in _SOURCE_RULES:
+    for keywords, source in _SOURCE_RULES:
         for kw in keywords:
             if kw in msg_lower:
-                return source, forced_level
-    return "system", None
+                return source
+    return "system"
+
+
+def _should_be_error(message: str) -> bool:
+    """Check if a message indicates a real error condition."""
+    if "iserror=false" in message.lower():
+        return False
+    if _ERROR_PATTERN.search(message):
+        return True
+    if "failed" in message.lower():
+        return True
+    return False
 
 
 def _parse_log_line(line: str) -> dict:
@@ -397,8 +413,8 @@ def _parse_log_line(line: str) -> dict:
     try:
         obj = json.loads(line)
     except (json.JSONDecodeError, ValueError):
-        source, forced_level = _infer_source(line)
-        level = forced_level or ("ERROR" if "error" in line.lower() else "INFO")
+        source = _infer_source(line)
+        level = "ERROR" if _should_be_error(line) else "INFO"
         return {
             "timestamp": "",
             "level": level,
@@ -427,12 +443,10 @@ def _parse_log_line(line: str) -> dict:
     message = str(obj.get("1", obj.get("message", obj.get("msg", ""))))
 
     # Infer source from message content
-    source, forced_level = _infer_source(message)
-    if forced_level:
-        level = forced_level
+    source = _infer_source(message)
 
-    # Any message containing "error" should be ERROR
-    if "error" in message.lower() and level not in ("ERROR", "FATAL"):
+    # Promote to ERROR if message indicates a real error
+    if level not in ("ERROR", "FATAL") and _should_be_error(message):
         level = "ERROR"
 
     return {
