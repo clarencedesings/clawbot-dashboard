@@ -1,4 +1,6 @@
+import hashlib
 import re
+from pathlib import Path
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
@@ -40,6 +42,9 @@ _status_cache = {
 CACHE_TTL = 30  # seconds
 _logs_cache = {"data": [], "timestamp": 0}
 LOGS_CACHE_TTL = 10  # seconds
+_alerts_cache = {"data": [], "timestamp": 0}
+ALERTS_CACHE_TTL = 30  # seconds
+DISMISSED_ALERTS_FILE = Path(__file__).parent / "dismissed_alerts.json"
 
 MOCK_BOTS = [
     {
@@ -503,6 +508,173 @@ async def get_logs(
         source_lower = source.lower()
         entries = [e for e in entries if e["source"] == source_lower]
     return {"logs": entries}
+
+
+# Alert detection rules: (keywords, alert_type, severity)
+_ALERT_RULES = [
+    (("credit balance is too low", "billing error"), "BILLING", "critical"),
+    (("authentication_error", "invalid x-api-key", "401"), "AUTH", "critical"),
+    (("rate_limit_error", "429", "rate limit"), "RATE LIMIT", "warning"),
+    (("context overflow", "prompt too large", "exceeds context limit"), "CONTEXT OVERFLOW", "warning"),
+    (("iserror=true",), "BOT ERROR", "error"),
+    (("sigterm", "shutting down"), "SERVICE RESTART", "info"),
+    (("update available",), "UPDATE AVAILABLE", "info"),
+]
+
+
+def _load_dismissed() -> set[str]:
+    """Load dismissed alert IDs from disk."""
+    if DISMISSED_ALERTS_FILE.exists():
+        try:
+            return set(json.loads(DISMISSED_ALERTS_FILE.read_text()))
+        except (json.JSONDecodeError, OSError):
+            pass
+    return set()
+
+
+def _save_dismissed(dismissed: set[str]):
+    """Save dismissed alert IDs to disk."""
+    DISMISSED_ALERTS_FILE.write_text(json.dumps(list(dismissed)))
+
+
+def _classify_alert(message: str) -> tuple[str, str] | None:
+    """Check if a message is alert-worthy. Returns (type, severity) or None."""
+    msg_lower = message.lower()
+    # Skip isError=false
+    if "iserror=false" in msg_lower:
+        return None
+    for keywords, alert_type, severity in _ALERT_RULES:
+        for kw in keywords:
+            if kw in msg_lower:
+                return alert_type, severity
+    return None
+
+
+def _parse_log_timestamp_full(raw_ts: str) -> str:
+    """Parse a timestamp and return ISO-style string for alert display."""
+    if not raw_ts:
+        return ""
+    for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ",
+                "%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S",
+                "%Y-%m-%d %H:%M:%S"):
+        try:
+            dt = datetime.strptime(raw_ts[:26].rstrip("Z"), fmt.rstrip("Z"))
+            return dt.strftime("%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            continue
+    return raw_ts[:19]
+
+
+def _parse_log_timestamp_dt(raw_ts: str) -> datetime | None:
+    """Parse a timestamp into a datetime for dedup comparison."""
+    if not raw_ts:
+        return None
+    for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ",
+                "%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S",
+                "%Y-%m-%d %H:%M:%S"):
+        try:
+            return datetime.strptime(raw_ts[:26].rstrip("Z"), fmt.rstrip("Z"))
+        except ValueError:
+            continue
+    return None
+
+
+def ssh_read_alerts() -> list[dict]:
+    """Read all log lines, extract alert-worthy events, deduplicate by type within 1 hour."""
+    now = time.time()
+    if _alerts_cache["data"] and (now - _alerts_cache["timestamp"]) < ALERTS_CACHE_TTL:
+        return _alerts_cache["data"]
+
+    try:
+        client = _ssh_connect()
+        _, stdout, _ = client.exec_command(
+            "ls -t /tmp/openclaw/openclaw-*.log 2>/dev/null | head -1 | xargs -r cat"
+        )
+        raw = stdout.read().decode("utf-8", errors="replace")
+        client.close()
+    except Exception:
+        return _alerts_cache["data"]
+
+    dismissed = _load_dismissed()
+
+    # Collect raw alerts
+    raw_alerts = []
+    for line in raw.strip().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+            message = str(obj.get("1", obj.get("message", obj.get("msg", ""))))
+            raw_ts = str(obj.get("time", obj.get("date", "")))
+        except (json.JSONDecodeError, ValueError):
+            message = line
+            raw_ts = ""
+
+        result = _classify_alert(message)
+        if result is None:
+            continue
+
+        alert_type, severity = result
+        timestamp_str = _parse_log_timestamp_full(raw_ts)
+        timestamp_dt = _parse_log_timestamp_dt(raw_ts)
+        raw_alerts.append({
+            "type": alert_type,
+            "severity": severity,
+            "message": message,
+            "timestamp": timestamp_str,
+            "timestamp_dt": timestamp_dt,
+        })
+
+    # Deduplicate: same type within 1 hour = one alert, count occurrences
+    deduped = {}  # key: (type, hour_bucket) -> alert
+    for alert in raw_alerts:
+        dt = alert["timestamp_dt"]
+        if dt:
+            bucket = f"{alert['type']}_{dt.strftime('%Y%m%d%H')}"
+        else:
+            bucket = f"{alert['type']}_unknown"
+
+        if bucket in deduped:
+            deduped[bucket]["count"] += 1
+            # Keep the most recent timestamp
+            if alert["timestamp"] > deduped[bucket]["timestamp"]:
+                deduped[bucket]["timestamp"] = alert["timestamp"]
+                deduped[bucket]["message"] = alert["message"]
+        else:
+            alert_id = hashlib.md5(bucket.encode()).hexdigest()[:12]
+            deduped[bucket] = {
+                "id": alert_id,
+                "type": alert["type"],
+                "severity": alert["severity"],
+                "message": alert["message"],
+                "timestamp": alert["timestamp"],
+                "count": 1,
+            }
+
+    # Filter dismissed, sort newest first
+    alerts = [a for a in deduped.values() if a["id"] not in dismissed]
+    alerts.sort(key=lambda a: a["timestamp"], reverse=True)
+
+    _alerts_cache["data"] = alerts
+    _alerts_cache["timestamp"] = now
+    return alerts
+
+
+@app.get("/api/alerts")
+async def get_alerts():
+    alerts = ssh_read_alerts()
+    return {"alerts": alerts}
+
+
+@app.post("/api/alerts/{alert_id}/dismiss")
+async def dismiss_alert(alert_id: str):
+    dismissed = _load_dismissed()
+    dismissed.add(alert_id)
+    _save_dismissed(dismissed)
+    # Clear cache so next fetch reflects dismissal
+    _alerts_cache["timestamp"] = 0
+    return {"status": "dismissed", "id": alert_id}
 
 
 @app.get("/api/openclaw/config")
