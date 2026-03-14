@@ -4,6 +4,7 @@ import BotCard from '../components/BotCard'
 export default function DashboardPage() {
   const [bots, setBots] = useState([])
   const [health, setHealth] = useState(null)
+  const [summary, setSummary] = useState(null)
 
   useEffect(() => {
     fetch('/api/bots')
@@ -15,10 +16,15 @@ export default function DashboardPage() {
       .then((r) => r.json())
       .then(setHealth)
       .catch(() => setHealth({ status: 'unreachable' }))
+
+    fetch('/api/dashboard/summary')
+      .then((r) => r.json())
+      .then(setSummary)
+      .catch(() => setSummary(null))
   }, [])
 
-  const online = bots.filter((b) => b.status === 'online').length
-  const total = bots.length
+  const online = summary?.online_bots ?? bots.filter((b) => b.status === 'online').length
+  const total = summary?.total_bots ?? bots.length
 
   return (
     <div>
@@ -55,7 +61,10 @@ export default function DashboardPage() {
           <p className="text-text-dim text-xs uppercase tracking-wider">
             Gateway
           </p>
-          <p className="text-2xl font-bold text-white mt-1">Port 18789</p>
+          <p className="text-2xl font-bold text-white mt-1">
+            {summary?.gateway_online ? 'Online' : 'Offline'}
+          </p>
+          <p className="text-text-dim text-xs mt-1">Port 18789</p>
         </div>
         <div className="bg-card rounded-xl border border-border p-4">
           <p className="text-text-dim text-xs uppercase tracking-wider">
@@ -69,7 +78,9 @@ export default function DashboardPage() {
           <p className="text-text-dim text-xs uppercase tracking-wider">
             Model
           </p>
-          <p className="text-2xl font-bold text-white mt-1">llama3.1:8b</p>
+          <p className="text-2xl font-bold text-white mt-1">
+            {summary?.model || '—'}
+          </p>
         </div>
       </div>
 
