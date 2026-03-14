@@ -4,7 +4,7 @@ from pathlib import Path
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 import os
 import time
@@ -44,6 +44,8 @@ _logs_cache = {"data": [], "timestamp": 0}
 LOGS_CACHE_TTL = 10  # seconds
 _alerts_cache = {"data": [], "timestamp": 0}
 ALERTS_CACHE_TTL = 30  # seconds
+_tokens_cache = {"data": None, "timestamp": 0}
+TOKENS_CACHE_TTL = 30  # seconds
 DISMISSED_ALERTS_FILE = Path(__file__).parent / "dismissed_alerts.json"
 
 MOCK_BOTS = [
@@ -675,6 +677,152 @@ async def dismiss_alert(alert_id: str):
     # Clear cache so next fetch reflects dismissal
     _alerts_cache["timestamp"] = 0
     return {"status": "dismissed", "id": alert_id}
+
+
+_DURATION_PATTERN = re.compile(r"durationMs=(\d+)")
+_MODEL_PATTERN = re.compile(r"model=([\w.:\-/]+)")
+
+
+def ssh_read_token_usage() -> dict:
+    """Read log lines and extract token/usage data, cached 30s."""
+    now_time = time.time()
+    if _tokens_cache["data"] is not None and (now_time - _tokens_cache["timestamp"]) < TOKENS_CACHE_TTL:
+        return _tokens_cache["data"]
+
+    try:
+        client = _ssh_connect()
+        _, stdout, _ = client.exec_command(
+            "ls -t /tmp/openclaw/openclaw-*.log 2>/dev/null | head -1 | xargs -r cat"
+        )
+        raw = stdout.read().decode("utf-8", errors="replace")
+        client.close()
+    except Exception:
+        return _tokens_cache["data"] or _empty_token_data()
+
+    now_dt = datetime.now(timezone.utc)
+    today_str = now_dt.strftime("%Y-%m-%d")
+
+    requests_total = 0
+    requests_today = 0
+    errors_today = 0
+    durations = []
+    hourly = {}  # hour_key -> count
+    recent_runs = []
+
+    for line in raw.strip().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+            message = str(obj.get("1", obj.get("message", obj.get("msg", ""))))
+            raw_ts = str(obj.get("time", obj.get("date", "")))
+        except (json.JSONDecodeError, ValueError):
+            message = line
+            raw_ts = ""
+
+        msg_lower = message.lower()
+
+        # Count embedded run starts as requests
+        is_run_start = "embedded run" in msg_lower and ("registered" in msg_lower or "start" in msg_lower)
+        is_run_done = "embedded run" in msg_lower and "done" in msg_lower
+
+        if not is_run_start and not is_run_done and "provider=anthropic" not in msg_lower:
+            continue
+
+        dt = _parse_log_timestamp_dt(raw_ts)
+        is_today = dt and dt.strftime("%Y-%m-%d") == today_str
+
+        if is_run_start or "provider=anthropic" in msg_lower:
+            requests_total += 1
+            if is_today:
+                requests_today += 1
+            if dt:
+                hour_key = dt.strftime("%Y-%m-%d %H:00")
+                hourly[hour_key] = hourly.get(hour_key, 0) + 1
+
+        # Extract duration from done messages
+        dur_match = _DURATION_PATTERN.search(message)
+        duration_ms = int(dur_match.group(1)) if dur_match else None
+
+        if is_run_done and duration_ms is not None:
+            durations.append(duration_ms)
+
+        # Track errors today
+        is_error = "iserror=true" in msg_lower and "iserror=false" not in msg_lower
+        if is_error and is_today:
+            errors_today += 1
+
+        # Collect recent run events for activity table
+        if is_run_start or is_run_done:
+            model_match = _MODEL_PATTERN.search(message)
+            model = model_match.group(1) if model_match else "—"
+            timestamp_display = _parse_log_timestamp(raw_ts) if raw_ts else "—"
+            recent_runs.append({
+                "time": timestamp_display,
+                "model": model,
+                "duration_ms": duration_ms,
+                "is_error": is_error,
+                "raw_ts": raw_ts,
+            })
+
+    # Build hourly breakdown for last 24 hours
+    hourly_breakdown = []
+    for i in range(24):
+        h = now_dt.replace(minute=0, second=0, microsecond=0) - timedelta(hours=23 - i)
+        key = h.strftime("%Y-%m-%d %H:00")
+        hourly_breakdown.append({
+            "hour": h.strftime("%H:00"),
+            "requests": hourly.get(key, 0),
+        })
+
+    avg_response_ms = round(sum(durations) / len(durations)) if durations else 0
+    estimated_cost = round(requests_today * 0.003, 3)
+
+    # Recent runs: newest first, last 20
+    recent_runs.sort(key=lambda r: r["raw_ts"], reverse=True)
+    recent_activity = [
+        {
+            "time": r["time"],
+            "model": r["model"],
+            "duration_ms": r["duration_ms"],
+            "status": "error" if r["is_error"] else "success",
+        }
+        for r in recent_runs[:20]
+    ]
+
+    result = {
+        "requests_today": requests_today,
+        "requests_total": requests_total,
+        "avg_response_ms": avg_response_ms,
+        "errors_today": errors_today,
+        "estimated_cost": estimated_cost,
+        "balance_remaining": 5.00,
+        "hourly_breakdown": hourly_breakdown,
+        "recent_activity": recent_activity,
+    }
+
+    _tokens_cache["data"] = result
+    _tokens_cache["timestamp"] = now_time
+    return result
+
+
+def _empty_token_data() -> dict:
+    return {
+        "requests_today": 0,
+        "requests_total": 0,
+        "avg_response_ms": 0,
+        "errors_today": 0,
+        "estimated_cost": 0,
+        "balance_remaining": 5.00,
+        "hourly_breakdown": [],
+        "recent_activity": [],
+    }
+
+
+@app.get("/api/tokens")
+async def get_tokens():
+    return ssh_read_token_usage()
 
 
 @app.get("/api/openclaw/config")
