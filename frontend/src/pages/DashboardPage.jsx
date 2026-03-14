@@ -1,10 +1,14 @@
 import { useEffect, useState } from 'react'
+import { Send, CheckCircle, XCircle } from 'lucide-react'
 import BotCard from '../components/BotCard'
 
 export default function DashboardPage() {
   const [bots, setBots] = useState([])
   const [health, setHealth] = useState(null)
   const [summary, setSummary] = useState(null)
+  const [quickCmd, setQuickCmd] = useState('')
+  const [sending, setSending] = useState(false)
+  const [recentCmds, setRecentCmds] = useState([])
 
   useEffect(() => {
     fetch('/api/bots')
@@ -21,6 +25,11 @@ export default function DashboardPage() {
       .then((r) => r.json())
       .then(setSummary)
       .catch(() => setSummary(null))
+
+    fetch('/api/tasks/history')
+      .then((r) => r.json())
+      .then((data) => setRecentCmds((data.history || []).slice(0, 3)))
+      .catch(() => {})
   }, [])
 
   const formatModel = (m) => {
@@ -30,6 +39,33 @@ export default function DashboardPage() {
     if (lower.includes('claude-opus')) return 'Claude Opus'
     if (lower.includes('llama')) return 'Llama 3.1'
     return m.includes('/') ? m.split('/').pop() : m
+  }
+
+  const handleQuickSend = () => {
+    if (!quickCmd.trim() || sending) return
+    setSending(true)
+    fetch('/api/tasks/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: quickCmd.trim(), agent: 'main' }),
+    })
+      .then((r) => r.json())
+      .then(() => {
+        setQuickCmd('')
+        fetch('/api/tasks/history')
+          .then((r) => r.json())
+          .then((data) => setRecentCmds((data.history || []).slice(0, 3)))
+          .catch(() => {})
+      })
+      .catch(() => {})
+      .finally(() => setSending(false))
+  }
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      handleQuickSend()
+    }
   }
 
   const online = summary?.online_bots ?? bots.filter((b) => b.status === 'online').length
@@ -95,10 +131,48 @@ export default function DashboardPage() {
 
       {/* Bot Cards */}
       <h3 className="text-lg font-semibold text-white mb-4">Bots</h3>
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-2 gap-4 mb-8">
         {bots.map((bot) => (
           <BotCard key={bot.id} bot={bot} />
         ))}
+      </div>
+
+      {/* Quick Command */}
+      <div className="bg-card rounded-xl border border-border p-5">
+        <h3 className="text-white font-semibold mb-3">Quick Command</h3>
+        <div className="flex gap-3">
+          <input
+            type="text"
+            value={quickCmd}
+            onChange={(e) => setQuickCmd(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder="Send a quick command to Jarvis..."
+            className="flex-1 bg-sidebar border border-border rounded-lg px-4 py-2.5 text-white text-sm placeholder-text-dim focus:outline-none focus:border-accent"
+          />
+          <button
+            onClick={handleQuickSend}
+            disabled={!quickCmd.trim() || sending}
+            className="bg-accent hover:bg-accent-hover text-white px-4 py-2.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex items-center gap-2"
+          >
+            <Send size={14} />
+            {sending ? 'Sending...' : 'Send'}
+          </button>
+        </div>
+        {recentCmds.length > 0 && (
+          <div className="mt-3 space-y-2">
+            {recentCmds.map((item, i) => (
+              <div key={i} className="flex items-center gap-2 text-xs">
+                {item.status === 'sent' ? (
+                  <CheckCircle size={12} className="text-green-400 shrink-0" />
+                ) : (
+                  <XCircle size={12} className="text-red-400 shrink-0" />
+                )}
+                <span className="text-text-dim truncate flex-1">{item.message}</span>
+                <span className="text-text-dim shrink-0">{item.sent_at}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )

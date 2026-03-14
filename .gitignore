@@ -5,3 +5,4 @@ __pycache__/
 *.pyc
 .venv/
 dismissed_alerts.json
+tasks_history.json

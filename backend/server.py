@@ -1,6 +1,7 @@
 import hashlib
 import re
 from pathlib import Path
+from pydantic import BaseModel
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
@@ -48,6 +49,9 @@ _tokens_cache = {"data": None, "timestamp": 0}
 TOKENS_CACHE_TTL = 30  # seconds
 _memory_cache = {"data": None, "timestamp": 0}
 MEMORY_CACHE_TTL = 60  # seconds
+_store_summary_cache = {"data": None, "timestamp": 0}
+_store_orders_cache = {"data": None, "timestamp": 0}
+STORE_CACHE_TTL = 30  # seconds
 MEMORY_FILES = [
     "/home/clarence/.openclaw/agents/main/USER.md",
     "/home/clarence/.openclaw/agents/main/agent/IDENTITY.md",
@@ -60,6 +64,7 @@ MEMORY_FILES = [
 ]
 SESSIONS_DIR = "/home/clarence/.openclaw/agents/main/sessions"
 DISMISSED_ALERTS_FILE = Path(__file__).parent / "dismissed_alerts.json"
+TASKS_HISTORY_FILE = Path(__file__).parent / "tasks_history.json"
 
 MOCK_BOTS = [
     {
@@ -845,10 +850,9 @@ def ssh_read_token_usage() -> dict:
 
 def _empty_token_data() -> dict:
     return {
-        "requests_today": 0,
         "requests_total": 0,
         "avg_response_ms": 0,
-        "errors_today": 0,
+        "errors_total": 0,
         "estimated_cost": 0,
         "balance_remaining": 5.00,
         "hourly_breakdown": [],
@@ -973,6 +977,483 @@ async def delete_memory(filename: str):
         return {"status": "deleted", "filename": filename}
     except Exception as e:
         return {"error": str(e)}
+
+
+def _ssh_mongosh(eval_str: str) -> str:
+    """Run a mongosh command on CLAWBOT via SSH and return stdout."""
+    client = _ssh_connect()
+    cmd = f'mongosh coloring_store --quiet --eval {repr(eval_str)}'
+    _, stdout, stderr = client.exec_command(cmd, timeout=10)
+    out = stdout.read().decode("utf-8", errors="replace").strip()
+    client.close()
+    return out
+
+
+def _mask_email(email: str) -> str:
+    """Mask email like j***@gmail.com."""
+    if not email or "@" not in email:
+        return "***"
+    local, domain = email.split("@", 1)
+    if len(local) <= 1:
+        return f"*@{domain}"
+    return f"{local[0]}***@{domain}"
+
+
+def _fetch_store_summary() -> dict:
+    """Fetch store summary from MongoDB on CLAWBOT via SSH + mongosh."""
+    now = time.time()
+    if _store_summary_cache["data"] is not None and (now - _store_summary_cache["timestamp"]) < STORE_CACHE_TTL:
+        return _store_summary_cache["data"]
+
+    default = {
+        "total_products": 0,
+        "active_products": 0,
+        "total_orders": 0,
+        "orders_today": 0,
+        "revenue_today": 0,
+        "total_revenue": 0,
+        "total_subscribers": 0,
+    }
+
+    try:
+        total_products = int(_ssh_mongosh("db.products.countDocuments({})") or 0)
+        active_products = int(_ssh_mongosh("db.products.countDocuments({status: 'active'})") or 0)
+        total_orders = int(_ssh_mongosh("db.orders.countDocuments({})") or 0)
+        total_subscribers = int(_ssh_mongosh("db.subscribers.countDocuments({})") or 0)
+
+        # Orders today
+        orders_today_raw = _ssh_mongosh(
+            "db.orders.countDocuments({created_at: {$gte: new Date(new Date().setHours(0,0,0,0))}})"
+        )
+        orders_today = int(orders_today_raw or 0)
+
+        # Total revenue
+        total_rev_raw = _ssh_mongosh(
+            "JSON.stringify(db.orders.aggregate([{$group:{_id:null,t:{$sum:'$amount'}}}]).toArray())"
+        )
+        total_revenue = 0.0
+        if total_rev_raw:
+            try:
+                agg = json.loads(total_rev_raw)
+                if agg:
+                    total_revenue = float(agg[0].get("t", 0))
+            except (json.JSONDecodeError, IndexError, TypeError):
+                pass
+
+        # Revenue today
+        rev_today_raw = _ssh_mongosh(
+            "JSON.stringify(db.orders.aggregate([{$match:{created_at:{$gte:new Date(new Date().setHours(0,0,0,0))}}},{$group:{_id:null,t:{$sum:'$amount'}}}]).toArray())"
+        )
+        revenue_today = 0.0
+        if rev_today_raw:
+            try:
+                agg = json.loads(rev_today_raw)
+                if agg:
+                    revenue_today = float(agg[0].get("t", 0))
+            except (json.JSONDecodeError, IndexError, TypeError):
+                pass
+
+        result = {
+            "total_products": total_products,
+            "active_products": active_products,
+            "total_orders": total_orders,
+            "orders_today": orders_today,
+            "revenue_today": round(revenue_today, 2),
+            "total_revenue": round(total_revenue, 2),
+            "total_subscribers": total_subscribers,
+        }
+
+        _store_summary_cache["data"] = result
+        _store_summary_cache["timestamp"] = now
+        return result
+    except Exception:
+        return _store_summary_cache["data"] or default
+
+
+def _fetch_recent_orders() -> list[dict]:
+    """Fetch last 10 orders from MongoDB on CLAWBOT via SSH + mongosh."""
+    now = time.time()
+    if _store_orders_cache["data"] is not None and (now - _store_orders_cache["timestamp"]) < STORE_CACHE_TTL:
+        return _store_orders_cache["data"]
+
+    try:
+        raw = _ssh_mongosh(
+            "JSON.stringify(db.orders.find({}).sort({created_at:-1}).limit(10).toArray())"
+        )
+        if not raw:
+            return []
+
+        orders = json.loads(raw)
+        result = []
+        for o in orders:
+            products = o.get("products", [])
+            product_names = []
+            for p in products:
+                if isinstance(p, dict):
+                    product_names.append(p.get("name", p.get("title", "Unknown")))
+                elif isinstance(p, str):
+                    product_names.append(p)
+
+            created = o.get("created_at")
+            if isinstance(created, dict) and "$date" in created:
+                # mongosh Extended JSON: {"$date": "2026-03-12T..."}
+                try:
+                    dt = datetime.fromisoformat(created["$date"].replace("Z", "+00:00"))
+                    created_str = dt.strftime("%Y-%m-%d %H:%M")
+                except (ValueError, TypeError):
+                    created_str = str(created["$date"])[:16]
+            elif isinstance(created, str):
+                created_str = created[:16]
+            else:
+                created_str = "—"
+
+            email = o.get("email", "")
+            amount = o.get("amount", 0)
+            if isinstance(amount, dict):
+                amount = amount.get("$numberDouble", amount.get("$numberInt", 0))
+            amount = float(amount) if amount else 0.0
+
+            oid = o.get("_id", "")
+            if isinstance(oid, dict):
+                oid = oid.get("$oid", str(oid))
+
+            result.append({
+                "id": str(oid),
+                "email": _mask_email(email),
+                "amount": round(amount, 2),
+                "status": o.get("status", "unknown"),
+                "created_at": created_str,
+                "products": product_names,
+            })
+
+        _store_orders_cache["data"] = result
+        _store_orders_cache["timestamp"] = now
+        return result
+    except Exception:
+        return _store_orders_cache["data"] or []
+
+
+@app.get("/api/store/summary")
+async def store_summary():
+    return _fetch_store_summary()
+
+
+@app.get("/api/store/recent-orders")
+async def store_recent_orders():
+    return {"orders": _fetch_recent_orders()}
+
+
+_kofi_summary_cache = {"data": None, "timestamp": 0}
+_kofi_queue_cache = {"data": None, "timestamp": 0}
+_kofi_processed_cache = {"data": None, "timestamp": 0}
+KOFI_CACHE_TTL = 15  # seconds
+KOFI_DIR = "/home/clarence/kofi-uploads"
+
+
+def _parse_ls_line(line: str) -> dict | None:
+    """Parse an 'ls -la' output line into {filename, size, timestamp}."""
+    # Example: -rw-r--r-- 1 clarence clarence 12345 Mar 12 14:30 file.png
+    parts = line.split(None, 8)
+    if len(parts) < 9:
+        return None
+    if parts[0].startswith("d") or parts[0].startswith("total"):
+        return None
+    filename = parts[8]
+    if filename in (".", ".."):
+        return None
+    try:
+        size = int(parts[4])
+    except ValueError:
+        size = 0
+    # Timestamp from month day time/year (columns 5-7)
+    timestamp = f"{parts[5]} {parts[6]} {parts[7]}"
+    return {"filename": filename, "size": size, "timestamp": timestamp}
+
+
+def _ssh_ls_files(dirpath: str) -> list[dict]:
+    """List files in a directory on CLAWBOT via SSH, parsed from ls -la."""
+    try:
+        client = _ssh_connect()
+        _, stdout, _ = client.exec_command(f"ls -la {dirpath}/ 2>/dev/null")
+        raw = stdout.read().decode("utf-8", errors="replace")
+        client.close()
+
+        files = []
+        for line in raw.strip().splitlines():
+            parsed = _parse_ls_line(line)
+            if parsed:
+                files.append(parsed)
+        return files
+    except Exception:
+        return []
+
+
+def _fetch_kofi_summary() -> dict:
+    """Fetch Ko-fi pipeline summary via SSH."""
+    now = time.time()
+    if _kofi_summary_cache["data"] is not None and (now - _kofi_summary_cache["timestamp"]) < KOFI_CACHE_TTL:
+        return _kofi_summary_cache["data"]
+
+    default = {
+        "queue_count": 0,
+        "processed_count": 0,
+        "failed_count": 0,
+        "last_processed": None,
+        "pipeline_status": "unknown",
+    }
+
+    try:
+        queue_files = _ssh_ls_files(f"{KOFI_DIR}/queue")
+        processed_files = _ssh_ls_files(f"{KOFI_DIR}/processed")
+        failed_files = _ssh_ls_files(f"{KOFI_DIR}/failed")
+
+        # Last processed: most recent file in processed (ls -la is alphabetical, sort by timestamp)
+        last_processed = None
+        if processed_files:
+            last = processed_files[-1]
+            last_processed = {"filename": last["filename"], "timestamp": last["timestamp"]}
+
+        # Pipeline status: active if queue has files, idle otherwise
+        pipeline_status = "active" if queue_files else "idle"
+
+        # Try to read most recent pipeline log
+        pipeline_log = None
+        try:
+            client = _ssh_connect()
+            _, stdout, _ = client.exec_command(
+                f"ls -t {KOFI_DIR}/*.log {KOFI_DIR}/logs/*.log 2>/dev/null | head -1 | xargs -r tail -5"
+            )
+            log_raw = stdout.read().decode("utf-8", errors="replace").strip()
+            client.close()
+            if log_raw:
+                pipeline_log = log_raw
+        except Exception:
+            pass
+
+        result = {
+            "queue_count": len(queue_files),
+            "processed_count": len(processed_files),
+            "failed_count": len(failed_files),
+            "last_processed": last_processed,
+            "pipeline_status": pipeline_status,
+            "pipeline_log": pipeline_log,
+        }
+
+        _kofi_summary_cache["data"] = result
+        _kofi_summary_cache["timestamp"] = now
+        return result
+    except Exception:
+        return _kofi_summary_cache["data"] or default
+
+
+def _fetch_kofi_queue() -> list[dict]:
+    """Fetch files currently in Ko-fi queue."""
+    now = time.time()
+    if _kofi_queue_cache["data"] is not None and (now - _kofi_queue_cache["timestamp"]) < KOFI_CACHE_TTL:
+        return _kofi_queue_cache["data"]
+
+    files = _ssh_ls_files(f"{KOFI_DIR}/queue")
+    _kofi_queue_cache["data"] = files
+    _kofi_queue_cache["timestamp"] = now
+    return files
+
+
+def _fetch_kofi_processed() -> list[dict]:
+    """Fetch last 10 processed Ko-fi files."""
+    now = time.time()
+    if _kofi_processed_cache["data"] is not None and (now - _kofi_processed_cache["timestamp"]) < KOFI_CACHE_TTL:
+        return _kofi_processed_cache["data"]
+
+    files = _ssh_ls_files(f"{KOFI_DIR}/processed")
+    # Last 10, newest last in ls output so reverse for newest-first
+    files = list(reversed(files))[:10]
+    _kofi_processed_cache["data"] = files
+    _kofi_processed_cache["timestamp"] = now
+    return files
+
+
+@app.get("/api/kofi/summary")
+async def kofi_summary():
+    return _fetch_kofi_summary()
+
+
+@app.get("/api/kofi/queue")
+async def kofi_queue():
+    return {"files": _fetch_kofi_queue()}
+
+
+@app.get("/api/kofi/processed")
+async def kofi_processed():
+    return {"files": _fetch_kofi_processed()}
+
+
+# ── Tasks / Command endpoints ─────────────────────────────────────────
+
+class SendCommandBody(BaseModel):
+    message: str
+    agent: str = "main"
+
+
+_AGENT_TARGETS = {
+    "main": "@clarencel_clawbot",
+    "business": "@clarencel_business",
+    "research": "@clarencel_research",
+    "coder": "@clarencel_coder",
+}
+
+
+def _load_tasks_history() -> list[dict]:
+    if TASKS_HISTORY_FILE.exists():
+        try:
+            return json.loads(TASKS_HISTORY_FILE.read_text())
+        except (json.JSONDecodeError, OSError):
+            pass
+    return []
+
+
+def _save_tasks_history(history: list[dict]):
+    TASKS_HISTORY_FILE.write_text(json.dumps(history, indent=2))
+
+
+@app.post("/api/tasks/send")
+async def tasks_send(body: SendCommandBody):
+    message = body.message.strip()
+    agent = body.agent.strip().lower()
+    if not message:
+        return {"success": False, "error": "Message is empty"}
+
+    target = _AGENT_TARGETS.get(agent, _AGENT_TARGETS["main"])
+    # Escape single quotes in the message for the shell command
+    safe_msg = message.replace("'", "'\\''")
+    cmd = f"openclaw message send --channel telegram --target {target} --message '{safe_msg}'"
+
+    sent_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        client = _ssh_connect()
+        _, stdout, stderr = client.exec_command(cmd, timeout=15)
+        out = stdout.read().decode("utf-8", errors="replace").strip()
+        err = stderr.read().decode("utf-8", errors="replace").strip()
+        client.close()
+
+        success = "error" not in (err or "").lower()
+
+        # Save to history
+        history = _load_tasks_history()
+        history.insert(0, {
+            "message": message,
+            "agent": agent,
+            "sent_at": sent_at,
+            "status": "sent" if success else "failed",
+            "response": out or err or None,
+        })
+        # Keep last 50
+        _save_tasks_history(history[:50])
+
+        return {"success": success, "sent_at": sent_at, "response": out or err or None}
+    except Exception as e:
+        # Save failed attempt
+        history = _load_tasks_history()
+        history.insert(0, {
+            "message": message,
+            "agent": agent,
+            "sent_at": sent_at,
+            "status": "failed",
+            "response": str(e),
+        })
+        _save_tasks_history(history[:50])
+        return {"success": False, "error": str(e), "sent_at": sent_at}
+
+
+@app.get("/api/tasks/history")
+async def tasks_history():
+    history = _load_tasks_history()
+    return {"history": history[:20]}
+
+
+@app.get("/api/tasks/scheduled")
+async def tasks_scheduled():
+    try:
+        client = _ssh_connect()
+        _, stdout, stderr = client.exec_command("openclaw cron list --json 2>/dev/null || openclaw cron list 2>/dev/null", timeout=10)
+        raw = stdout.read().decode("utf-8", errors="replace").strip()
+        client.close()
+
+        if not raw:
+            return {"tasks": []}
+
+        # Try JSON parse first
+        try:
+            tasks = json.loads(raw)
+            if isinstance(tasks, list):
+                return {"tasks": tasks}
+            if isinstance(tasks, dict) and "tasks" in tasks:
+                return {"tasks": tasks["tasks"]}
+            return {"tasks": []}
+        except json.JSONDecodeError:
+            # Parse plain text: each line is a cron entry
+            tasks = []
+            for line in raw.splitlines():
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                # Try to split: "schedule | message" or "* * * * * command"
+                parts = line.split("|", 1)
+                if len(parts) == 2:
+                    tasks.append({"schedule": parts[0].strip(), "message": parts[1].strip()})
+                else:
+                    # Assume first 5 fields are cron, rest is message
+                    fields = line.split(None, 5)
+                    if len(fields) >= 6:
+                        tasks.append({"schedule": " ".join(fields[:5]), "message": fields[5]})
+                    else:
+                        tasks.append({"schedule": "", "message": line})
+            return {"tasks": tasks}
+    except Exception:
+        return {"tasks": []}
+
+
+class ScheduleTaskBody(BaseModel):
+    schedule: str
+    message: str
+
+
+@app.post("/api/tasks/schedule")
+async def tasks_schedule(body: ScheduleTaskBody):
+    schedule = body.schedule.strip()
+    message = body.message.strip()
+    if not schedule or not message:
+        return {"success": False, "error": "Schedule and message are required"}
+
+    safe_schedule = schedule.replace("'", "'\\''")
+    safe_msg = message.replace("'", "'\\''")
+    cmd = f"openclaw cron add --schedule '{safe_schedule}' --message '{safe_msg}'"
+
+    try:
+        client = _ssh_connect()
+        _, stdout, stderr = client.exec_command(cmd, timeout=10)
+        out = stdout.read().decode("utf-8", errors="replace").strip()
+        err = stderr.read().decode("utf-8", errors="replace").strip()
+        client.close()
+
+        success = "error" not in (err or "").lower()
+        return {"success": success, "response": out or err or None}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.delete("/api/tasks/scheduled/{task_id}")
+async def tasks_delete_scheduled(task_id: str):
+    safe_id = task_id.replace("'", "'\\''")
+    cmd = f"openclaw cron remove '{safe_id}'"
+    try:
+        client = _ssh_connect()
+        _, stdout, stderr = client.exec_command(cmd, timeout=10)
+        out = stdout.read().decode("utf-8", errors="replace").strip()
+        err = stderr.read().decode("utf-8", errors="replace").strip()
+        client.close()
+        return {"success": True, "response": out or err or None}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 
 @app.get("/api/openclaw/config")
