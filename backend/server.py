@@ -691,8 +691,9 @@ def ssh_read_token_usage() -> dict:
 
     try:
         client = _ssh_connect()
+        # Read the two most recent log files to cover daily rotation
         _, stdout, _ = client.exec_command(
-            "ls -t /tmp/openclaw/openclaw-*.log 2>/dev/null | head -1 | xargs -r cat"
+            "ls -t /tmp/openclaw/openclaw-*.log 2>/dev/null | head -2 | xargs -r cat"
         )
         raw = stdout.read().decode("utf-8", errors="replace")
         client.close()
