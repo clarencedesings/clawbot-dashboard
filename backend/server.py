@@ -367,6 +367,10 @@ def _parse_log_timestamp(raw_ts: str) -> str:
     return m.group(1) if m else raw_ts[:8]
 
 
+_LEVEL_ID_MAP = {1: "FATAL", 2: "ERROR", 3: "WARN", 4: "INFO", 5: "DEBUG", 6: "TRACE"}
+_VALID_LEVELS = {"FATAL", "ERROR", "WARN", "INFO", "DEBUG", "TRACE"}
+
+
 def _parse_log_line(line: str) -> dict:
     """Parse a single log line — expects JSON, falls back to plain text."""
     try:
@@ -383,19 +387,36 @@ def _parse_log_line(line: str) -> dict:
     raw_ts = obj.get("time", obj.get("date", ""))
     timestamp = _parse_log_timestamp(str(raw_ts))
 
-    # Level from "logLevelName"
-    level = str(obj.get("logLevelName", "INFO")).upper()
-    if level == "WARNING":
-        level = "WARN"
-    if level not in ("INFO", "WARN", "ERROR", "DEBUG"):
+    # Level: prefer logLevelId numeric mapping, fall back to logLevelName
+    level_id = obj.get("logLevelId")
+    level_name = str(obj.get("logLevelName", "")).upper()
+    if level_name == "WARNING":
+        level_name = "WARN"
+
+    if isinstance(level_id, int) and level_id in _LEVEL_ID_MAP:
+        level = _LEVEL_ID_MAP[level_id]
+    elif level_name in _VALID_LEVELS:
+        level = level_name
+    else:
         level = "INFO"
 
-    # Source from "subsystem" — may be dict or string
+    # Source from "subsystem" — may be JSON string like '{"subsystem":"gateway/channels/telegram"}'
     subsystem = obj.get("subsystem", "unknown")
-    if isinstance(subsystem, dict):
-        source = subsystem.get("subsystem", subsystem.get("name", "unknown"))
-    else:
-        source = str(subsystem)
+    if isinstance(subsystem, str):
+        # May be a nested JSON string
+        try:
+            parsed = json.loads(subsystem)
+            if isinstance(parsed, dict):
+                subsystem = parsed.get("subsystem", parsed.get("name", "unknown"))
+            else:
+                subsystem = str(parsed)
+        except (json.JSONDecodeError, ValueError):
+            pass  # already a plain string
+    elif isinstance(subsystem, dict):
+        subsystem = subsystem.get("subsystem", subsystem.get("name", "unknown"))
+
+    # Extract last segment after "/" for readable label
+    source = str(subsystem).rsplit("/", 1)[-1]
 
     # Message from "1" field (human-readable message)
     message = str(obj.get("1", obj.get("message", obj.get("msg", ""))))
@@ -447,6 +468,9 @@ async def get_logs(
     if level:
         level_upper = level.upper()
         entries = [e for e in entries if e["level"] == level_upper]
+    else:
+        # Filter out DEBUG and TRACE by default
+        entries = [e for e in entries if e["level"] not in ("DEBUG", "TRACE")]
     if source:
         source_lower = source.lower()
         entries = [e for e in entries if e["source"] == source_lower]
