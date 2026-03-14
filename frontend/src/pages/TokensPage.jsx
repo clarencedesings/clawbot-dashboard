@@ -2,10 +2,10 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import { Zap, Clock, AlertCircle, DollarSign, Wallet } from 'lucide-react'
 
 const STAT_CARDS = [
-  { key: 'requests_today', label: 'Requests Today', icon: Zap, color: 'text-accent', format: (v) => v },
+  { key: 'requests_total', label: 'Total Requests', icon: Zap, color: 'text-accent', format: (v) => v },
   { key: 'avg_response_ms', label: 'Avg Response', icon: Clock, color: 'text-blue-400', format: (v) => `${v}ms` },
-  { key: 'errors_today', label: 'Errors Today', icon: AlertCircle, color: 'text-red-400', format: (v) => v },
-  { key: 'estimated_cost', label: 'Est. Cost Today', icon: DollarSign, color: 'text-green-400', format: (v) => `$${v.toFixed(3)}` },
+  { key: 'errors_total', label: 'Total Errors', icon: AlertCircle, color: 'text-red-400', format: (v) => v },
+  { key: 'estimated_cost', label: 'Est. Total Cost', icon: DollarSign, color: 'text-green-400', format: (v) => `$${v.toFixed(3)}` },
   { key: 'balance_remaining', label: 'Balance', icon: Wallet, color: 'text-yellow-400', format: (v) => `$${v.toFixed(2)}` },
 ]
 
@@ -70,7 +70,7 @@ export default function TokensPage() {
       {/* Hourly Chart */}
       <div className="bg-card rounded-xl border border-border p-6 mb-8">
         <h3 className="text-white font-semibold mb-4">
-          Requests — Last 24 Hours
+          Requests — Hourly Activity
         </h3>
         <div className="flex items-end gap-1 h-40">
           {hourly.map((h, i) => {

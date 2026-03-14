@@ -691,21 +691,17 @@ def ssh_read_token_usage() -> dict:
 
     try:
         client = _ssh_connect()
-        # Read the two most recent log files to cover daily rotation
+        # Read ALL log files
         _, stdout, _ = client.exec_command(
-            "ls -t /tmp/openclaw/openclaw-*.log 2>/dev/null | head -2 | xargs -r cat"
+            "cat /tmp/openclaw/openclaw-*.log 2>/dev/null"
         )
         raw = stdout.read().decode("utf-8", errors="replace")
         client.close()
     except Exception:
         return _tokens_cache["data"] or _empty_token_data()
 
-    now_dt = datetime.now(timezone.utc)
-    cutoff_24h = now_dt - timedelta(hours=24)
-
     requests_total = 0
-    requests_24h = 0
-    errors_24h = 0
+    errors_total = 0
     success_durations = []
     hourly = {}  # hour_key -> count
     recent_runs = []
@@ -732,13 +728,10 @@ def ssh_read_token_usage() -> dict:
             continue
 
         dt = _parse_log_timestamp_dt(raw_ts)
-        in_last_24h = dt is not None and dt >= cutoff_24h
         is_error = "iserror=true" in msg_lower and "iserror=false" not in msg_lower
 
         if is_run_start or "provider=anthropic" in msg_lower:
             requests_total += 1
-            if in_last_24h:
-                requests_24h += 1
             if dt:
                 hour_key = dt.strftime("%Y-%m-%d %H:00")
                 hourly[hour_key] = hourly.get(hour_key, 0) + 1
@@ -750,9 +743,8 @@ def ssh_read_token_usage() -> dict:
         if is_run_done and duration_ms is not None and not is_error:
             success_durations.append(duration_ms)
 
-        # Track errors in last 24h
-        if is_error and in_last_24h:
-            errors_24h += 1
+        if is_error:
+            errors_total += 1
 
         # Collect recent run events for activity table
         if is_run_start or is_run_done:
@@ -767,18 +759,22 @@ def ssh_read_token_usage() -> dict:
                 "raw_ts": raw_ts,
             })
 
-    # Build hourly breakdown for last 24 hours
+    # Build hourly breakdown from all hours with activity, sorted chronologically
     hourly_breakdown = []
-    for i in range(24):
-        h = now_dt.replace(minute=0, second=0, microsecond=0) - timedelta(hours=23 - i)
-        key = h.strftime("%Y-%m-%d %H:00")
+    for key in sorted(hourly.keys()):
+        # key is "YYYY-MM-DD HH:00", display as "MM/DD HH:00"
+        try:
+            dt = datetime.strptime(key, "%Y-%m-%d %H:00")
+            label = dt.strftime("%m/%d %H:%M")
+        except ValueError:
+            label = key
         hourly_breakdown.append({
-            "hour": h.strftime("%H:00"),
-            "requests": hourly.get(key, 0),
+            "hour": label,
+            "requests": hourly[key],
         })
 
     avg_response_ms = round(sum(success_durations) / len(success_durations)) if success_durations else 0
-    estimated_cost = round(requests_24h * 0.003, 3)
+    estimated_cost = round(requests_total * 0.003, 3)
 
     # Recent runs: newest first, last 20
     recent_runs.sort(key=lambda r: r["raw_ts"], reverse=True)
@@ -793,10 +789,9 @@ def ssh_read_token_usage() -> dict:
     ]
 
     result = {
-        "requests_today": requests_24h,
         "requests_total": requests_total,
         "avg_response_ms": avg_response_ms,
-        "errors_today": errors_24h,
+        "errors_total": errors_total,
         "estimated_cost": estimated_cost,
         "balance_remaining": 5.00,
         "hourly_breakdown": hourly_breakdown,
