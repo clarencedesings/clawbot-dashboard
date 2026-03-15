@@ -1335,7 +1335,7 @@ async def tasks_send(body: SendCommandBody):
     sent_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     try:
         client = _ssh_connect()
-        _, stdout, stderr = client.exec_command(cmd, timeout=180 if agent == "paige" else 120)
+        _, stdout, stderr = client.exec_command(cmd, timeout=300)
         out = stdout.read().decode("utf-8", errors="replace").strip()
         err = stderr.read().decode("utf-8", errors="replace").strip()
         client.close()
