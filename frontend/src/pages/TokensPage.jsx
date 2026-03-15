@@ -1,12 +1,11 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { Zap, Clock, AlertCircle, DollarSign, Wallet } from 'lucide-react'
+import { Zap, Clock, AlertCircle, DollarSign, ExternalLink } from 'lucide-react'
 
 const STAT_CARDS = [
   { key: 'requests_total', label: 'Total Requests', icon: Zap, color: 'text-accent', format: (v) => v },
   { key: 'avg_response_ms', label: 'Avg Response', icon: Clock, color: 'text-blue-400', format: (v) => `${v}ms` },
   { key: 'errors_total', label: 'Total Errors', icon: AlertCircle, color: 'text-red-400', format: (v) => v },
   { key: 'estimated_cost', label: 'Est. Total Cost', icon: DollarSign, color: 'text-green-400', format: (v) => `$${v.toFixed(3)}` },
-  { key: 'balance_remaining', label: 'Balance', icon: Wallet, color: 'text-yellow-400', format: (v) => `$${v.toFixed(2)}` },
 ]
 
 export default function TokensPage() {
@@ -65,6 +64,23 @@ export default function TokensPage() {
             </div>
           )
         })}
+        {/* Balance card — links to Anthropic Console */}
+        <a
+          href="https://console.anthropic.com"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="bg-card rounded-xl border border-border p-4 hover:border-accent/50 transition-colors"
+        >
+          <div className="flex items-center gap-2 mb-2">
+            <ExternalLink size={16} className="text-yellow-400" />
+            <p className="text-text-dim text-xs uppercase tracking-wider">
+              Balance
+            </p>
+          </div>
+          <p className="text-sm font-semibold text-accent-hover">
+            Check Anthropic Console
+          </p>
+        </a>
       </div>
 
       {/* Hourly Chart */}

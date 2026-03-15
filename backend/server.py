@@ -811,6 +811,13 @@ def ssh_read_token_usage() -> dict:
     except Exception:
         return _tokens_cache["data"] or _empty_token_data()
 
+    # Graceful fallback for empty/missing logs (e.g. after reboot)
+    if not raw or not raw.strip():
+        result = _empty_token_data()
+        _tokens_cache["data"] = result
+        _tokens_cache["timestamp"] = now_time
+        return result
+
     # First pass: parse all lines into structured entries
     parsed_lines = []
     for line in raw.strip().splitlines():
@@ -911,7 +918,20 @@ def ssh_read_token_usage() -> dict:
         })
 
     avg_response_ms = round(sum(success_durations) / len(success_durations)) if success_durations else 0
-    estimated_cost = round(requests_total * 0.003, 3)
+
+    # Per-model cost estimation
+    estimated_cost = 0.0
+    for r in recent_runs:
+        model = r.get("model", "unknown") if isinstance(r, dict) else "unknown"
+        model_lower = model.lower()
+        if "llama" in model_lower or "ollama" in model_lower:
+            pass  # free, local model
+        elif "sonnet" in model_lower:
+            # ~$0.003/1k input + $0.015/1k output, rough estimate $0.01 per request
+            estimated_cost += 0.01
+        else:
+            estimated_cost += 0.003  # unknown model flat estimate
+    estimated_cost = round(estimated_cost, 3)
 
     # Recent runs: newest first, last 20
     recent_runs.sort(key=lambda r: r["raw_ts"], reverse=True)
@@ -930,7 +950,7 @@ def ssh_read_token_usage() -> dict:
         "avg_response_ms": avg_response_ms,
         "errors_total": errors_total,
         "estimated_cost": estimated_cost,
-        "balance_remaining": 5.00,
+        "balance_remaining": "N/A",
         "hourly_breakdown": hourly_breakdown,
         "recent_activity": recent_activity,
     }
@@ -946,7 +966,7 @@ def _empty_token_data() -> dict:
         "avg_response_ms": 0,
         "errors_total": 0,
         "estimated_cost": 0,
-        "balance_remaining": 5.00,
+        "balance_remaining": "N/A",
         "hourly_breakdown": [],
         "recent_activity": [],
     }
