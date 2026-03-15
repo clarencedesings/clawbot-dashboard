@@ -12,6 +12,7 @@ import {
   Store,
   Coffee,
   PenLine,
+  ShieldCheck,
 } from 'lucide-react'
 
 const NAV_ITEMS = [
@@ -26,6 +27,7 @@ const NAV_ITEMS = [
   { to: '/store', label: 'Store', icon: Store },
   { to: '/kofi', label: 'Ko-fi', icon: Coffee },
   { to: '/paige', label: 'Paige', icon: PenLine },
+  { to: '/approvals', label: 'Approvals', icon: ShieldCheck },
 ]
 
 export default function Sidebar() {

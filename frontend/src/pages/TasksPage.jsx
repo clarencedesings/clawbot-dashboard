@@ -145,7 +145,7 @@ export default function TasksPage() {
             className="bg-accent hover:bg-accent-hover text-white px-5 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex items-center gap-2"
           >
             <Send size={14} />
-            {sending ? 'Sending...' : 'Send Command'}
+            {sending ? 'Queuing...' : 'Queue Command'}
           </button>
           <span className="text-text-dim text-xs ml-auto">Ctrl+Enter to send</span>
         </div>
@@ -167,6 +167,8 @@ export default function TasksPage() {
                 <div key={i} className="px-6 py-3 flex items-start gap-3">
                   {item.status === 'sent' ? (
                     <CheckCircle size={16} className="text-green-400 shrink-0 mt-0.5" />
+                  ) : item.status === 'queued' ? (
+                    <Clock size={16} className="text-yellow-400 shrink-0 mt-0.5" />
                   ) : (
                     <XCircle size={16} className="text-red-400 shrink-0 mt-0.5" />
                   )}
@@ -177,6 +179,10 @@ export default function TasksPage() {
                       <span>{item.sent_at}</span>
                       {item.status === 'sent' ? (
                         <span className="text-green-400">Sent</span>
+                      ) : item.status === 'queued' ? (
+                        <span className="text-yellow-400">Queued</span>
+                      ) : item.status === 'denied' ? (
+                        <span className="text-red-400">Denied</span>
                       ) : (
                         <span className="text-red-400">Failed</span>
                       )}

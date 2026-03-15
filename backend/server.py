@@ -65,6 +65,10 @@ MEMORY_FILES = [
 SESSIONS_DIR = "/home/clarence/.openclaw/agents/main/sessions"
 DISMISSED_ALERTS_FILE = Path(__file__).parent / "dismissed_alerts.json"
 TASKS_HISTORY_FILE = Path(__file__).parent / "tasks_history.json"
+AGENT_QUEUE_DIR = "/home/clarence/agent-queue"
+AGENT_QUEUE_PENDING = f"{AGENT_QUEUE_DIR}/pending"
+AGENT_QUEUE_APPROVED = f"{AGENT_QUEUE_DIR}/approved"
+AGENT_QUEUE_DENIED = f"{AGENT_QUEUE_DIR}/denied"
 
 MOCK_BOTS = [
     {
@@ -1322,57 +1326,208 @@ async def tasks_send(body: SendCommandBody):
     if not message:
         return {"success": False, "error": "Message is empty"}
 
-    # Special case: Paige runs paige.py instead of openclaw message
-    if agent == "paige":
-        safe_msg = message.replace("'", "'\\''")
-        cmd = f"cd /home/clarence/paige && python3 paige.py --topic '{safe_msg}'"
-    else:
-        target = _AGENT_TARGETS.get(agent, _AGENT_TARGETS["main"])
-        # Escape single quotes in the message for the shell command
-        safe_msg = message.replace("'", "'\\''")
-        cmd = f"/home/clarence/.npm-global/bin/openclaw agent --channel telegram --to {target['to']} --agent {target['agent']} --message '{safe_msg}' --deliver --reply-channel telegram --reply-to {target['to']}"
+    queued_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    task_id = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    filename = f"{task_id}-{agent}.json"
 
-    sent_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    task_data = {
+        "agent": agent,
+        "message": message,
+        "queued_at": queued_at,
+    }
+
     try:
         client = _ssh_connect()
-        _, stdout, stderr = client.exec_command(cmd, timeout=300)
-        out = stdout.read().decode("utf-8", errors="replace").strip()
-        err = stderr.read().decode("utf-8", errors="replace").strip()
+        sftp = client.open_sftp()
+        filepath = f"{AGENT_QUEUE_PENDING}/{filename}"
+        with sftp.open(filepath, "w") as f:
+            f.write(json.dumps(task_data, indent=2))
+        sftp.close()
         client.close()
 
-        success = "error" not in (err or "").lower()
-
-        # Save to history
+        # Save to history as queued
         history = _load_tasks_history()
         history.insert(0, {
             "message": message,
             "agent": agent,
-            "sent_at": sent_at,
-            "status": "sent" if success else "failed",
-            "response": out or err or None,
+            "sent_at": queued_at,
+            "status": "queued",
+            "response": None,
         })
-        # Keep last 50
         _save_tasks_history(history[:50])
 
-        return {"success": success, "sent_at": sent_at, "response": out or err or None}
+        return {"success": True, "status": "queued", "sent_at": queued_at, "filename": filename}
     except Exception as e:
-        # Save failed attempt
-        history = _load_tasks_history()
-        history.insert(0, {
-            "message": message,
-            "agent": agent,
-            "sent_at": sent_at,
-            "status": "failed",
-            "response": str(e),
-        })
-        _save_tasks_history(history[:50])
-        return {"success": False, "error": str(e), "sent_at": sent_at}
+        return {"success": False, "error": str(e), "sent_at": queued_at}
 
 
 @app.get("/api/tasks/history")
 async def tasks_history():
     history = _load_tasks_history()
     return {"history": history[:20]}
+
+
+@app.get("/api/tasks/pending")
+async def tasks_pending():
+    try:
+        client = _ssh_connect()
+        cmd = f"find {AGENT_QUEUE_PENDING} -name '*.json' -printf '%f\\n' 2>/dev/null | sort -r"
+        _, stdout, _ = client.exec_command(cmd, timeout=10)
+        filenames = [f.strip() for f in stdout.read().decode("utf-8", errors="replace").strip().splitlines() if f.strip()]
+
+        tasks = []
+        sftp = client.open_sftp()
+        for fname in filenames:
+            try:
+                with sftp.open(f"{AGENT_QUEUE_PENDING}/{fname}", "r") as f:
+                    data = json.loads(f.read().decode("utf-8"))
+                data["filename"] = fname
+                tasks.append(data)
+            except Exception:
+                pass
+        sftp.close()
+        client.close()
+        return {"tasks": tasks}
+    except Exception:
+        return {"tasks": []}
+
+
+class DenyTaskBody(BaseModel):
+    reason: str = ""
+
+
+@app.post("/api/tasks/approve/{filename:path}")
+async def tasks_approve(filename: str):
+    safe = filename.replace("'", "'\\''")
+    try:
+        client = _ssh_connect()
+        sftp = client.open_sftp()
+
+        # Read the task
+        with sftp.open(f"{AGENT_QUEUE_PENDING}/{filename}", "r") as f:
+            task = json.loads(f.read().decode("utf-8"))
+
+        agent = task.get("agent", "main")
+        message = task.get("message", "")
+
+        # Build the command
+        if agent == "paige":
+            safe_msg = message.replace("'", "'\\''")
+            cmd = f"cd /home/clarence/paige && python3 paige.py --topic '{safe_msg}'"
+        else:
+            target = _AGENT_TARGETS.get(agent, _AGENT_TARGETS["main"])
+            safe_msg = message.replace("'", "'\\''")
+            cmd = f"/home/clarence/.npm-global/bin/openclaw agent --channel telegram --to {target['to']} --agent {target['agent']} --message '{safe_msg}' --deliver --reply-channel telegram --reply-to {target['to']}"
+
+        # Execute the command
+        _, stdout, stderr = client.exec_command(cmd, timeout=300)
+        out = stdout.read().decode("utf-8", errors="replace").strip()
+        err = stderr.read().decode("utf-8", errors="replace").strip()
+        success = "error" not in (err or "").lower()
+
+        # Add result to task and move to approved
+        task["approved_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        task["status"] = "approved"
+        task["response"] = out or err or None
+        task["exec_success"] = success
+        with sftp.open(f"{AGENT_QUEUE_APPROVED}/{filename}", "w") as f:
+            f.write(json.dumps(task, indent=2))
+
+        # Remove from pending
+        sftp.remove(f"{AGENT_QUEUE_PENDING}/{filename}")
+        sftp.close()
+        client.close()
+
+        # Update local history
+        history = _load_tasks_history()
+        for h in history:
+            if h.get("message") == message and h.get("status") == "queued":
+                h["status"] = "sent" if success else "failed"
+                h["response"] = out or err or None
+                break
+        _save_tasks_history(history[:50])
+
+        # Telegram notification
+        _send_telegram_phyllis(f"✅ Agent task approved and executed:\n<b>{agent}</b>: {message[:100]}")
+
+        return {"success": True, "message": f"Approved and executed: {agent}", "response": out or err or None}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/tasks/deny/{filename:path}")
+async def tasks_deny(filename: str, body: DenyTaskBody = DenyTaskBody()):
+    try:
+        client = _ssh_connect()
+        sftp = client.open_sftp()
+
+        # Read the task
+        with sftp.open(f"{AGENT_QUEUE_PENDING}/{filename}", "r") as f:
+            task = json.loads(f.read().decode("utf-8"))
+
+        # Add denial info and move
+        task["denied_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        task["status"] = "denied"
+        task["reason"] = body.reason
+        with sftp.open(f"{AGENT_QUEUE_DENIED}/{filename}", "w") as f:
+            f.write(json.dumps(task, indent=2))
+
+        sftp.remove(f"{AGENT_QUEUE_PENDING}/{filename}")
+        sftp.close()
+        client.close()
+
+        # Update local history
+        history = _load_tasks_history()
+        for h in history:
+            if h.get("message") == task.get("message") and h.get("status") == "queued":
+                h["status"] = "denied"
+                break
+        _save_tasks_history(history[:50])
+
+        return {"success": True, "message": f"Denied: {task.get('agent', 'unknown')}"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.get("/api/tasks/queue-history")
+async def tasks_queue_history():
+    try:
+        client = _ssh_connect()
+        approved = []
+        denied = []
+
+        # Read approved
+        cmd = f"find {AGENT_QUEUE_APPROVED} -name '*.json' -printf '%f\\n' 2>/dev/null | sort -r | head -20"
+        _, stdout, _ = client.exec_command(cmd, timeout=10)
+        filenames = [f.strip() for f in stdout.read().decode("utf-8", errors="replace").strip().splitlines() if f.strip()]
+        sftp = client.open_sftp()
+        for fname in filenames:
+            try:
+                with sftp.open(f"{AGENT_QUEUE_APPROVED}/{fname}", "r") as f:
+                    data = json.loads(f.read().decode("utf-8"))
+                data["filename"] = fname
+                approved.append(data)
+            except Exception:
+                pass
+
+        # Read denied
+        cmd = f"find {AGENT_QUEUE_DENIED} -name '*.json' -printf '%f\\n' 2>/dev/null | sort -r | head -20"
+        _, stdout, _ = client.exec_command(cmd, timeout=10)
+        filenames = [f.strip() for f in stdout.read().decode("utf-8", errors="replace").strip().splitlines() if f.strip()]
+        for fname in filenames:
+            try:
+                with sftp.open(f"{AGENT_QUEUE_DENIED}/{fname}", "r") as f:
+                    data = json.loads(f.read().decode("utf-8"))
+                data["filename"] = fname
+                denied.append(data)
+            except Exception:
+                pass
+
+        sftp.close()
+        client.close()
+        return {"approved": approved, "denied": denied}
+    except Exception:
+        return {"approved": [], "denied": []}
 
 
 @app.get("/api/tasks/scheduled")
