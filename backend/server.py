@@ -502,7 +502,7 @@ async def dashboard_summary():
         client = _ssh_connect()
         # Paige webhook service
         _, stdout_p, _ = client.exec_command(
-            "systemctl --user is-active paige-webhook.service 2>/dev/null"
+            "systemctl is-active paige-webhook.service 2>/dev/null"
         )
         paige_status = stdout_p.read().decode().strip() == "active"
 
