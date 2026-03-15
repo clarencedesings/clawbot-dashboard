@@ -326,6 +326,36 @@ async def health():
     return {"status": "ok"}
 
 
+_notif_cache: dict = {"data": None, "timestamp": 0}
+
+@app.get("/api/notifications")
+async def notifications():
+    now_t = time.time()
+    if _notif_cache["data"] is not None and (now_t - _notif_cache["timestamp"]) < 15:
+        return _notif_cache["data"]
+    try:
+        client = _ssh_connect()
+        _, stdout1, _ = client.exec_command(
+            "ls /home/clarence/agent-queue/pending/ 2>/dev/null | wc -l"
+        )
+        pending_tasks = int(stdout1.read().decode().strip() or "0")
+        _, stdout2, _ = client.exec_command(
+            "ls /home/clarence/paige/staged/ 2>/dev/null | wc -l"
+        )
+        pending_posts = int(stdout2.read().decode().strip() or "0")
+        client.close()
+        result = {
+            "pending_tasks": pending_tasks,
+            "pending_posts": pending_posts,
+            "total": pending_tasks + pending_posts,
+        }
+    except Exception:
+        result = {"pending_tasks": 0, "pending_posts": 0, "total": 0}
+    _notif_cache["data"] = result
+    _notif_cache["timestamp"] = now_t
+    return result
+
+
 def _format_age(ms):
     """Convert milliseconds age to human readable string."""
     if ms is None:
