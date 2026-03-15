@@ -1639,6 +1639,7 @@ async def paige_approve(filename: str):
         body = re.sub(r'^\*\*.*?\*\*\s*', '', body, flags=re.MULTILINE)
         body = re.sub(r'^=+\s*', '', body, flags=re.MULTILINE)
         body = re.sub(r'^-{3,}\s*', '', body, flags=re.MULTILINE)
+        body = re.sub(r'^\[Image description:.*?\]\s*', '', body, flags=re.MULTILINE)
         body = body.strip()
 
         # Post to Phyllis blog API
