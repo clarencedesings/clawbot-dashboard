@@ -28,6 +28,7 @@ export default function TasksPage() {
   const [cronExpr, setCronExpr] = useState('')
   const [cronMsg, setCronMsg] = useState('')
   const [scheduling, setScheduling] = useState(false)
+  const [confirmDeleteHistory, setConfirmDeleteHistory] = useState(null)
   const intervalRef = useRef(null)
 
   const fetchHistory = useCallback(() => {
@@ -196,6 +197,13 @@ export default function TasksPage() {
                       )}
                     </div>
                   </div>
+                  <button
+                    onClick={() => setConfirmDeleteHistory(i)}
+                    className="text-text-dim hover:text-red-400 transition-colors cursor-pointer shrink-0 mt-0.5"
+                    title="Delete"
+                  >
+                    <Trash2 size={14} />
+                  </button>
                 </div>
               ))}
             </div>
@@ -259,6 +267,35 @@ export default function TasksPage() {
           </table>
         </div>
       </div>
+
+      {/* Delete History Confirm */}
+      {confirmDeleteHistory !== null && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-card border border-border rounded-xl p-6 w-full max-w-sm shadow-xl">
+            <h3 className="text-white font-semibold text-lg mb-2">Delete Command?</h3>
+            <p className="text-text-dim text-sm mb-6">
+              Remove this command from the recent history?
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setConfirmDeleteHistory(null)}
+                className="px-4 py-2 rounded-lg text-sm font-medium bg-sidebar border border-border text-text-dim hover:text-white transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  setHistory((prev) => prev.filter((_, idx) => idx !== confirmDeleteHistory))
+                  setConfirmDeleteHistory(null)
+                }}
+                className="px-4 py-2 rounded-lg text-sm font-medium bg-red-600 hover:bg-red-500 text-white transition-colors cursor-pointer"
+              >
+                Yes, Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Add Schedule Modal */}
       {showModal && (
