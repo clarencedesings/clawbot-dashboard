@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from datetime import datetime, timedelta, timezone
 import json
+import uuid
 import os
 import time
 import paramiko
@@ -1481,7 +1482,8 @@ async def tasks_send(body: SendCommandBody):
         target = _AGENT_TARGETS.get(agent, _AGENT_TARGETS["main"])
         full_msg = _AGENT_INSTRUCTIONS.get(agent, "") + message
         safe_msg = full_msg.replace("'", "'\\''")
-        cmd = f"/home/clarence/.npm-global/bin/openclaw agent --channel telegram --to {target['to']} --agent {target['agent']} --message '{safe_msg}' --deliver --reply-channel telegram --reply-to {target['to']}"
+        session_flag = f" --session-id {uuid.uuid4()}" if agent in ("business", "research", "coder") else ""
+        cmd = f"/home/clarence/.npm-global/bin/openclaw agent --channel telegram --to {target['to']} --agent {target['agent']} --message '{safe_msg}' --deliver --reply-channel telegram --reply-to {target['to']}{session_flag}"
 
     try:
         client = _ssh_connect()
