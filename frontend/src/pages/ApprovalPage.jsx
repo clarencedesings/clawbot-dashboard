@@ -10,6 +10,7 @@ import {
   RefreshCw,
   Download,
   FileText,
+  Trash2,
 } from 'lucide-react'
 
 export default function ApprovalPage() {
@@ -24,6 +25,7 @@ export default function ApprovalPage() {
   const [expandedResponse, setExpandedResponse] = useState({})
   const [savedResponses, setSavedResponses] = useState([])
   const [expandedSaved, setExpandedSaved] = useState({})
+  const [confirmDelete, setConfirmDelete] = useState(null) // { type, filename, label }
   const intervalRef = useRef(null)
 
   const showToast = (message, type = 'success') => {
@@ -100,6 +102,26 @@ export default function ApprovalPage() {
 
   const toggleResponse = (filename) => {
     setExpandedResponse((p) => ({ ...p, [filename]: !p[filename] }))
+  }
+
+  const handleDelete = (type, filename) => {
+    const urlMap = {
+      pending: `/api/tasks/pending/${encodeURIComponent(filename)}`,
+      history: `/api/tasks/history/${encodeURIComponent(filename)}`,
+      saved: `/api/tasks/saved-responses/${encodeURIComponent(filename)}`,
+    }
+    setConfirmDelete(null)
+    fetch(urlMap[type], { method: 'DELETE' })
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.success) {
+          showToast('Deleted')
+          fetchData()
+        } else {
+          showToast(d.error || 'Delete failed', 'error')
+        }
+      })
+      .catch(() => showToast('Failed to reach server', 'error'))
   }
 
   const formatTime = (ts) => {
@@ -280,6 +302,13 @@ export default function ApprovalPage() {
                         ? 'Resending...'
                         : 'Deny & Redo'}
                     </button>
+                    <button
+                      onClick={() => setConfirmDelete({ type: 'pending', filename: task.filename, label: task.task?.slice(0, 50) || task.filename })}
+                      className="px-2 py-1.5 rounded-lg text-text-dim hover:text-red-400 transition-colors cursor-pointer"
+                      title="Delete"
+                    >
+                      <Trash2 size={14} />
+                    </button>
                   </div>
                 </div>
               </div>
@@ -325,6 +354,15 @@ export default function ApprovalPage() {
                           )}
                         </div>
                       </div>
+                      {task.filename && (
+                        <button
+                          onClick={() => setConfirmDelete({ type: 'history', filename: task.filename, label: task.task?.slice(0, 50) || task.filename })}
+                          className="text-text-dim hover:text-red-400 transition-colors cursor-pointer shrink-0"
+                          title="Delete"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
                     </div>
                   ))}
               </div>
@@ -381,14 +419,23 @@ export default function ApprovalPage() {
                       </div>
                     </div>
                   </div>
-                  <a
-                    href={`/api/tasks/saved-responses/${encodeURIComponent(item.filename)}`}
-                    download
-                    className="px-3 py-1.5 rounded-lg text-xs font-medium bg-accent/15 text-accent-hover hover:bg-accent/25 transition-colors cursor-pointer flex items-center gap-1.5 shrink-0"
-                  >
-                    <Download size={12} />
-                    Download
-                  </a>
+                  <div className="flex gap-2 shrink-0">
+                    <a
+                      href={`/api/tasks/saved-responses/${encodeURIComponent(item.filename)}`}
+                      download
+                      className="px-3 py-1.5 rounded-lg text-xs font-medium bg-accent/15 text-accent-hover hover:bg-accent/25 transition-colors cursor-pointer flex items-center gap-1.5"
+                    >
+                      <Download size={12} />
+                      Download
+                    </a>
+                    <button
+                      onClick={() => setConfirmDelete({ type: 'saved', filename: item.filename, label: item.task?.slice(0, 50) || item.filename })}
+                      className="px-2 py-1.5 rounded-lg text-text-dim hover:text-red-400 transition-colors cursor-pointer"
+                      title="Delete"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
                 </div>
               </div>
             ))}
@@ -426,6 +473,32 @@ export default function ApprovalPage() {
               >
                 <Save size={16} />
                 Save to File
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete confirmation modal */}
+      {confirmDelete && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-card border border-border rounded-xl p-6 w-full max-w-sm shadow-xl">
+            <h3 className="text-white font-semibold text-lg mb-2">Delete?</h3>
+            <p className="text-text-dim text-sm mb-5">
+              Delete &quot;{confirmDelete.label}...&quot;? This cannot be undone.
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setConfirmDelete(null)}
+                className="px-4 py-2 rounded-lg text-sm font-medium bg-sidebar border border-border text-text-dim hover:text-white transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleDelete(confirmDelete.type, confirmDelete.filename)}
+                className="px-4 py-2 rounded-lg text-sm font-medium bg-red-600 hover:bg-red-500 text-white transition-colors cursor-pointer"
+              >
+                Delete
               </button>
             </div>
           </div>

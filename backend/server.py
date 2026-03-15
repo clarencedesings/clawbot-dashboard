@@ -1432,6 +1432,60 @@ async def tasks_pending():
         return {"tasks": []}
 
 
+@app.delete("/api/tasks/pending/{filename:path}")
+async def tasks_delete_pending(filename: str):
+    try:
+        client = _ssh_connect()
+        sftp = client.open_sftp()
+        sftp.remove(f"{AGENT_QUEUE_PENDING}/{filename}")
+        sftp.close()
+        client.close()
+        return {"success": True}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.delete("/api/tasks/history/{filename:path}")
+async def tasks_delete_history_entry(filename: str):
+    try:
+        client = _ssh_connect()
+        sftp = client.open_sftp()
+        # Try removing from approved and denied
+        for folder in (AGENT_QUEUE_APPROVED, AGENT_QUEUE_DENIED):
+            try:
+                sftp.remove(f"{folder}/{filename}")
+            except FileNotFoundError:
+                pass
+            # Also remove .txt variant
+            txt_name = filename.replace(".json", ".txt")
+            try:
+                sftp.remove(f"{folder}/{txt_name}")
+            except FileNotFoundError:
+                pass
+        sftp.close()
+        client.close()
+        # Also remove local .txt if it exists
+        local_txt = AGENT_RESPONSES_DIR / filename.replace(".json", ".txt")
+        if local_txt.exists():
+            local_txt.unlink()
+        return {"success": True}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.delete("/api/tasks/saved-responses/{filename:path}")
+async def tasks_delete_saved_response(filename: str):
+    safe_name = Path(filename).name
+    filepath = AGENT_RESPONSES_DIR / safe_name
+    if not filepath.exists():
+        return {"success": False, "error": "File not found"}
+    try:
+        filepath.unlink()
+        return {"success": True}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 class ApproveTaskBody(BaseModel):
     destination: str = "telegram"  # "telegram" or "file"
 
