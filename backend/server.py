@@ -2116,6 +2116,45 @@ async def paige_processed():
         return {"posts": []}
 
 
+class ResendBody(BaseModel):
+    feedback: str = ""
+
+
+@app.post("/api/paige/resend/{filename:path}")
+async def paige_resend(filename: str, body: ResendBody = ResendBody()):
+    try:
+        client = _ssh_connect()
+        sftp = client.open_sftp()
+
+        # Read the staged file to get the title/topic
+        with sftp.open(f"{PAIGE_STAGED}/{filename}", "r") as f:
+            content = f.read().decode("utf-8", errors="replace")
+        meta = _parse_frontmatter(content)
+        title = meta["title"] or filename.replace(".md", "").replace("-", " ").title()
+
+        # Delete the staged file
+        sftp.remove(f"{PAIGE_STAGED}/{filename}")
+        sftp.close()
+
+        # Build the topic with optional feedback
+        topic = title
+        if body.feedback.strip():
+            topic = f"{title}. Feedback: {body.feedback.strip()}"
+        safe_topic = topic.replace("'", "'\\''")
+
+        # Run paige.py with the topic
+        cmd = f"cd {PAIGE_DIR} && python3 paige.py --topic '{safe_topic}'"
+        client.exec_command(cmd, timeout=5)
+        client.close()
+
+        _send_telegram_phyllis(f"🔄 Paige is rewriting: {title}")
+        _paige_status_cache["data"] = None
+
+        return {"success": True, "message": f"Paige is rewriting: {title}"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 @app.post("/api/paige/generate")
 async def paige_generate():
     try:

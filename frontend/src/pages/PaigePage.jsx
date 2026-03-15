@@ -10,6 +10,7 @@ import {
   ExternalLink,
   Clipboard,
   Trash2,
+  RotateCcw,
 } from 'lucide-react'
 
 export default function PaigePage() {
@@ -26,6 +27,8 @@ export default function PaigePage() {
   const [published, setPublished] = useState([])
   const [copiedPin, setCopiedPin] = useState(null)
   const [confirmDelete, setConfirmDelete] = useState(null)
+  const [resendModal, setResendModal] = useState(null)
+  const [resendFeedback, setResendFeedback] = useState('')
   const intervalRef = useRef(null)
   const genTimerRef = useRef(null)
 
@@ -137,6 +140,28 @@ export default function PaigePage() {
         }
       })
       .catch(() => showToast('Failed to reach server', 'error'))
+  }
+
+  const handleResend = (filename) => {
+    setActionLoading((p) => ({ ...p, [filename]: 'resend' }))
+    setResendModal(null)
+    fetch(`/api/paige/resend/${encodeURIComponent(filename)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ feedback: resendFeedback }),
+    })
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.success) {
+          showToast('Paige is rewriting this post...')
+          setResendFeedback('')
+          fetchData()
+        } else {
+          showToast(d.error || 'Resend failed', 'error')
+        }
+      })
+      .catch(() => showToast('Failed to reach server', 'error'))
+      .finally(() => setActionLoading((p) => ({ ...p, [filename]: null })))
   }
 
   const renderMarkdown = (content) => {
@@ -315,6 +340,19 @@ export default function PaigePage() {
                         : 'Approve & Publish'}
                     </button>
                     <button
+                      onClick={() => {
+                        setResendFeedback('')
+                        setResendModal(post.filename)
+                      }}
+                      disabled={!!actionLoading[post.filename]}
+                      className="px-3 py-1.5 rounded-lg text-xs font-medium bg-yellow-600 hover:bg-yellow-500 text-white transition-colors cursor-pointer disabled:opacity-50 flex items-center gap-1"
+                    >
+                      <RotateCcw size={12} />
+                      {actionLoading[post.filename] === 'resend'
+                        ? 'Resending...'
+                        : 'Resend'}
+                    </button>
+                    <button
                       onClick={() => setConfirmReject(post.filename)}
                       disabled={!!actionLoading[post.filename]}
                       className="px-3 py-1.5 rounded-lg text-xs font-medium bg-red-600 hover:bg-red-500 text-white transition-colors cursor-pointer disabled:opacity-50"
@@ -454,6 +492,48 @@ export default function PaigePage() {
                   }}
                 />
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Resend to Paige modal */}
+      {resendModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-card border border-border rounded-xl p-6 w-full max-w-md shadow-xl">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-white font-semibold text-lg">Resend to Paige</h3>
+              <button
+                onClick={() => setResendModal(null)}
+                className="text-text-dim hover:text-white transition-colors cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <p className="text-text-dim text-sm mb-4">
+              The current draft will be deleted and Paige will rewrite the post. Add optional feedback to guide the rewrite.
+            </p>
+            <textarea
+              value={resendFeedback}
+              onChange={(e) => setResendFeedback(e.target.value)}
+              placeholder="e.g. Make it more fun, Focus more on kids, Add more detail about..."
+              rows={3}
+              className="w-full bg-sidebar border border-border rounded-lg px-4 py-3 text-white text-sm placeholder-text-dim resize-none focus:outline-none focus:border-accent mb-4"
+            />
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setResendModal(null)}
+                className="px-4 py-2 rounded-lg text-sm font-medium bg-sidebar border border-border text-text-dim hover:text-white transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleResend(resendModal)}
+                className="px-4 py-2 rounded-lg text-sm font-medium bg-yellow-600 hover:bg-yellow-500 text-white transition-colors cursor-pointer flex items-center gap-2"
+              >
+                <RotateCcw size={14} />
+                Resend
+              </button>
             </div>
           </div>
         </div>
