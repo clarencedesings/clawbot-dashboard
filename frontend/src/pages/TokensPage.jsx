@@ -43,7 +43,7 @@ export default function TokensPage() {
       </div>
 
       {/* Stat cards */}
-      <div className="grid grid-cols-5 gap-4 mb-8">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-8">
         {STAT_CARDS.map((card) => {
           const Icon = card.icon
           const value = data?.[card.key] ?? 0

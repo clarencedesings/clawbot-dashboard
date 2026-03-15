@@ -163,7 +163,7 @@ export default function ApprovalPage() {
       </div>
 
       {/* Stats bar */}
-      <div className="grid grid-cols-3 gap-4 mb-8">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
         <div className="bg-card rounded-xl border border-border p-4 flex items-center gap-3">
           <Clock size={20} className="text-yellow-400" />
           <div>
@@ -226,9 +226,9 @@ export default function ApprovalPage() {
                 key={task.filename}
                 className="bg-card rounded-xl border border-border p-6"
               >
-                <div className="flex items-start justify-between gap-4">
+                <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-3 mb-2">
+                    <div className="flex flex-wrap items-center gap-3 mb-2">
                       <span className="text-xs px-2 py-1 rounded-full bg-accent/15 text-accent-hover capitalize font-medium">
                         {task.agent}
                       </span>
@@ -280,7 +280,7 @@ export default function ApprovalPage() {
                     )}
                   </div>
 
-                  <div className="flex gap-2 shrink-0">
+                  <div className="flex flex-wrap gap-2 shrink-0">
                     <button
                       onClick={() => setApproveModal(task.filename)}
                       disabled={!!actionLoading[task.filename]}
@@ -386,9 +386,9 @@ export default function ApprovalPage() {
                 key={item.filename}
                 className="bg-card rounded-xl border border-border p-6"
               >
-                <div className="flex items-start justify-between gap-4">
+                <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-3 mb-2">
+                    <div className="flex flex-wrap items-center gap-3 mb-2">
                       <span className="text-xs px-2 py-1 rounded-full bg-accent/15 text-accent-hover capitalize font-medium">
                         {item.agent}
                       </span>
@@ -419,7 +419,7 @@ export default function ApprovalPage() {
                       </div>
                     </div>
                   </div>
-                  <div className="flex gap-2 shrink-0">
+                  <div className="flex flex-wrap gap-2 shrink-0">
                     <a
                       href={`/api/tasks/saved-responses/${encodeURIComponent(item.filename)}`}
                       download

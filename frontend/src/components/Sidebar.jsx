@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { NavLink } from 'react-router-dom'
+import { NavLink, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard,
   Bot,
@@ -13,6 +13,8 @@ import {
   Coffee,
   PenLine,
   ShieldCheck,
+  Menu,
+  X,
 } from 'lucide-react'
 
 const NAV_ITEMS = [
@@ -33,6 +35,13 @@ const NAV_ITEMS = [
 export default function Sidebar() {
   const [serverOnline, setServerOnline] = useState(false)
   const [notifs, setNotifs] = useState({ pending_tasks: 0, pending_posts: 0, total: 0 })
+  const [mobileOpen, setMobileOpen] = useState(false)
+  const location = useLocation()
+
+  // Close mobile sidebar on navigation
+  useEffect(() => {
+    setMobileOpen(false)
+  }, [location.pathname])
 
   useEffect(() => {
     const poll = () => {
@@ -63,13 +72,21 @@ export default function Sidebar() {
     return () => clearInterval(id)
   }, [])
 
-  return (
-    <aside className="w-56 bg-sidebar border-r border-border flex flex-col shrink-0">
-      <div className="p-5 border-b border-border">
-        <h1 className="text-lg font-bold text-white tracking-tight">
-          Clawbot
-        </h1>
-        <p className="text-xs text-text-dim mt-0.5">Dashboard v1.0</p>
+  const sidebarContent = (
+    <>
+      <div className="p-5 border-b border-border flex items-center justify-between">
+        <div>
+          <h1 className="text-lg font-bold text-white tracking-tight">
+            Clawbot
+          </h1>
+          <p className="text-xs text-text-dim mt-0.5">Dashboard v1.0</p>
+        </div>
+        <button
+          onClick={() => setMobileOpen(false)}
+          className="md:hidden text-text-dim hover:text-white transition-colors cursor-pointer"
+        >
+          <X size={20} />
+        </button>
       </div>
       <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
         {NAV_ITEMS.map((item) => {
@@ -110,6 +127,43 @@ export default function Sidebar() {
           </span>
         </div>
       </div>
-    </aside>
+    </>
+  )
+
+  return (
+    <>
+      {/* Mobile hamburger button */}
+      <button
+        onClick={() => setMobileOpen(true)}
+        className="md:hidden fixed top-3 left-3 z-40 bg-sidebar border border-border rounded-lg p-2 text-text-dim hover:text-white transition-colors cursor-pointer"
+      >
+        <Menu size={20} />
+        {notifs.total > 0 && (
+          <span className="absolute -top-1 -right-1 min-w-[16px] h-4 flex items-center justify-center rounded-full bg-red-500 text-white text-[9px] font-bold px-1">
+            {notifs.total}
+          </span>
+        )}
+      </button>
+
+      {/* Mobile backdrop */}
+      {mobileOpen && (
+        <div
+          className="md:hidden fixed inset-0 bg-black/60 z-40"
+          onClick={() => setMobileOpen(false)}
+        />
+      )}
+
+      {/* Sidebar — always visible on md+, overlay on mobile */}
+      <aside
+        className={`
+          w-56 bg-sidebar border-r border-border flex flex-col shrink-0
+          fixed md:static inset-y-0 left-0 z-50
+          transform transition-transform duration-200 ease-in-out
+          ${mobileOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+        `}
+      >
+        {sidebarContent}
+      </aside>
+    </>
   )
 }

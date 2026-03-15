@@ -271,7 +271,7 @@ export default function PaigePage() {
       </div>
 
       {/* Status bar */}
-      <div className="grid grid-cols-5 gap-4 mb-8">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-8">
         <div className="bg-card rounded-xl border border-border p-4 flex items-center gap-3">
           <span
             className={`w-3 h-3 rounded-full shrink-0 ${
@@ -360,7 +360,7 @@ export default function PaigePage() {
                 key={post.filename}
                 className="bg-card rounded-xl border border-border p-6"
               >
-                <div className="flex items-start justify-between gap-4">
+                <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
                   <div className="min-w-0 flex-1">
                     <h4 className="text-white font-semibold text-lg">
                       {post.title}
@@ -380,7 +380,7 @@ export default function PaigePage() {
                       {post.preview?.length > 300 ? '...' : ''}
                     </p>
                   </div>
-                  <div className="flex gap-2 shrink-0">
+                  <div className="flex flex-wrap gap-2 shrink-0">
                     <button
                       onClick={() => handlePreview(post.filename)}
                       className="px-3 py-1.5 rounded-lg text-xs font-medium bg-sidebar border border-border text-text-dim hover:text-white transition-colors cursor-pointer"
@@ -465,7 +465,7 @@ export default function PaigePage() {
                 key={post.filename}
                 className="bg-card rounded-xl border border-border p-5"
               >
-                <div className="flex items-start justify-between gap-4">
+                <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
                   <div className="min-w-0 flex-1">
                     <h4 className="text-white font-semibold">{post.title}</h4>
                     {post.date && (
@@ -477,7 +477,7 @@ export default function PaigePage() {
                       </p>
                     )}
                   </div>
-                  <div className="flex gap-2 shrink-0">
+                  <div className="flex flex-wrap gap-2 shrink-0">
                     <a
                       href="https://phyllisdiannestudio.com/blog"
                       target="_blank"

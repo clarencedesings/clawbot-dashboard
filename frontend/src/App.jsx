@@ -18,7 +18,7 @@ export default function App() {
   return (
     <>
       <Sidebar />
-      <main className="flex-1 p-8 overflow-auto">
+      <main className="flex-1 p-4 pt-14 md:pt-8 md:p-8 overflow-auto">
         <Routes>
           <Route path="/" element={<DashboardPage />} />
           <Route path="/bots" element={<BotsPage />} />

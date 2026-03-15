@@ -101,7 +101,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Stats Row */}
-      <div className="grid grid-cols-6 gap-4 mb-8">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
         <div className="bg-card rounded-xl border border-border p-4">
           <p className="text-text-dim text-xs uppercase tracking-wider">
             Bots Online
@@ -169,7 +169,7 @@ export default function DashboardPage() {
           </div>
         )}
       </div>
-      <div className="grid grid-cols-2 gap-4 mb-8">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
         {bots.map((bot) => (
           <BotCard key={bot.id} bot={bot} />
         ))}
