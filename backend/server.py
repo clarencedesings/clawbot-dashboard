@@ -1295,10 +1295,10 @@ class SendCommandBody(BaseModel):
 
 
 _AGENT_TARGETS = {
-    "main": "@clarencel_clawbot",
-    "business": "@clarencel_business",
-    "research": "@clarencel_research",
-    "coder": "@clarencel_coder",
+    "main": {"to": "8507470773", "agent": "main"},
+    "business": {"to": "8507470773", "agent": "business"},
+    "research": {"to": "8507470773", "agent": "research"},
+    "coder": {"to": "8507470773", "agent": "coder"},
 }
 
 
@@ -1330,7 +1330,7 @@ async def tasks_send(body: SendCommandBody):
         target = _AGENT_TARGETS.get(agent, _AGENT_TARGETS["main"])
         # Escape single quotes in the message for the shell command
         safe_msg = message.replace("'", "'\\''")
-        cmd = f"openclaw message send --channel telegram --target {target} --message '{safe_msg}'"
+        cmd = f"/home/clarence/.npm-global/bin/openclaw agent --channel telegram --to {target['to']} --agent {target['agent']} --message '{safe_msg}' --deliver --reply-channel telegram --reply-to {target['to']}"
 
     sent_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     try:
