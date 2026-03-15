@@ -1649,6 +1649,10 @@ async def paige_approve(filename: str):
         body = re.sub(r'^-{3,}\s*$', '', body, flags=re.MULTILINE)
         # Remove [Image description:...] lines
         body = re.sub(r'^\[Image description:.*?\]\s*', '', body, flags=re.MULTILINE)
+        # Remove [Insert image] lines
+        body = re.sub(r'^\[Insert image\]\s*$', '', body, flags=re.MULTILINE)
+        # Remove #### heading lines
+        body = re.sub(r'^####\s+.*$', '', body, flags=re.MULTILINE)
         body = body.strip()
 
         # Post to Phyllis blog API
@@ -1743,6 +1747,10 @@ async def paige_processed():
             body = re.sub(r'^=+\s*$', '', body, flags=re.MULTILINE)
             body = re.sub(r'^-{3,}\s*$', '', body, flags=re.MULTILINE)
             body = re.sub(r'^\[Image description:.*?\]\s*', '', body, flags=re.MULTILINE)
+            # Remove [Insert image] lines
+            body = re.sub(r'^\[Insert image\]\s*$', '', body, flags=re.MULTILINE)
+            # Remove #### heading lines
+            body = re.sub(r'^####\s+.*$', '', body, flags=re.MULTILINE)
             body = body.strip()
 
             posts.append({
