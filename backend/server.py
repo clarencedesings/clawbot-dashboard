@@ -490,11 +490,66 @@ async def dashboard_summary():
 
     online_count = sum(1 for b in bots if b["status"] == "online")
     services = ssh_check_services()
+
+    # Extra stats via single SSH connection
+    paige_status = False
+    pending_posts = 0
+    pending_tasks = 0
+    disk_used = "—"
+    disk_total = "—"
+    sessions_today = 0
+    try:
+        client = _ssh_connect()
+        # Paige webhook service
+        _, stdout_p, _ = client.exec_command(
+            "systemctl --user is-active paige-webhook.service 2>/dev/null"
+        )
+        paige_status = stdout_p.read().decode().strip() == "active"
+
+        # Pending counts
+        _, stdout_pp, _ = client.exec_command(
+            "ls /home/clarence/paige/staged/ 2>/dev/null | wc -l"
+        )
+        pending_posts = int(stdout_pp.read().decode().strip() or "0")
+
+        _, stdout_pt, _ = client.exec_command(
+            "ls /home/clarence/agent-queue/pending/ 2>/dev/null | wc -l"
+        )
+        pending_tasks = int(stdout_pt.read().decode().strip() or "0")
+
+        # Disk usage
+        _, stdout_df, _ = client.exec_command("df -h / | tail -1")
+        df_line = stdout_df.read().decode().strip().split()
+        if len(df_line) >= 4:
+            disk_total = df_line[1]
+            disk_used = df_line[2]
+
+        # Sessions today from openclaw status
+        _, stdout_oc, _ = client.exec_command(
+            "/home/clarence/.npm-global/bin/openclaw status --json 2>/dev/null",
+            timeout=15,
+        )
+        oc_raw = stdout_oc.read().decode("utf-8", errors="replace").strip()
+        if oc_raw:
+            oc_data = json.loads(oc_raw)
+            for ag in oc_data.get("agents", []):
+                sessions_today += ag.get("sessionsCount", 0)
+
+        client.close()
+    except Exception:
+        pass
+
     return {
         "total_bots": len(bots),
         "online_bots": online_count,
         "gateway_online": services["gateway"],
         "model": model,
+        "paige_status": paige_status,
+        "pending_posts": pending_posts,
+        "pending_tasks": pending_tasks,
+        "disk_used": disk_used,
+        "disk_total": disk_total,
+        "sessions_today": sessions_today,
     }
 
 

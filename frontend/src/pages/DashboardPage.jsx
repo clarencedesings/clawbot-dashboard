@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { Send, CheckCircle, XCircle } from 'lucide-react'
+import { useEffect, useState, useCallback, useRef } from 'react'
+import { Send, CheckCircle, XCircle, HardDrive } from 'lucide-react'
 import BotCard from '../components/BotCard'
 
 export default function DashboardPage() {
@@ -9,8 +9,9 @@ export default function DashboardPage() {
   const [quickCmd, setQuickCmd] = useState('')
   const [sending, setSending] = useState(false)
   const [recentCmds, setRecentCmds] = useState([])
+  const intervalRef = useRef(null)
 
-  useEffect(() => {
+  const fetchAll = useCallback(() => {
     fetch('/api/bots')
       .then((r) => r.json())
       .then((data) => setBots(data.bots || []))
@@ -31,6 +32,12 @@ export default function DashboardPage() {
       .then((data) => setRecentCmds((data.history || []).slice(0, 3)))
       .catch(() => {})
   }, [])
+
+  useEffect(() => {
+    fetchAll()
+    intervalRef.current = setInterval(fetchAll, 30000)
+    return () => clearInterval(intervalRef.current)
+  }, [fetchAll])
 
   const formatModel = (m) => {
     if (!m) return '—'
@@ -70,6 +77,7 @@ export default function DashboardPage() {
 
   const online = summary?.online_bots ?? bots.filter((b) => b.status === 'online').length
   const total = summary?.total_bots ?? bots.length
+  const pendingTotal = (summary?.pending_posts ?? 0) + (summary?.pending_tasks ?? 0)
 
   return (
     <div>
@@ -93,7 +101,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Stats Row */}
-      <div className="grid grid-cols-4 gap-4 mb-8">
+      <div className="grid grid-cols-6 gap-4 mb-8">
         <div className="bg-card rounded-xl border border-border p-4">
           <p className="text-text-dim text-xs uppercase tracking-wider">
             Bots Online
@@ -106,17 +114,39 @@ export default function DashboardPage() {
           <p className="text-text-dim text-xs uppercase tracking-wider">
             Gateway
           </p>
-          <p className="text-2xl font-bold text-white mt-1">
+          <p className={`text-2xl font-bold mt-1 ${summary?.gateway_online ? 'text-online' : 'text-offline'}`}>
             {summary?.gateway_online ? 'Online' : 'Offline'}
           </p>
-          <p className="text-text-dim text-xs mt-1">Port 18789</p>
         </div>
         <div className="bg-card rounded-xl border border-border p-4">
           <p className="text-text-dim text-xs uppercase tracking-wider">
-            Requests Today
+            Sessions Today
           </p>
           <p className="text-2xl font-bold text-white mt-1">
-            {bots.reduce((sum, b) => sum + b.requests_today, 0)}
+            {summary?.sessions_today ?? '—'}
+          </p>
+        </div>
+        <div className="bg-card rounded-xl border border-border p-4">
+          <p className="text-text-dim text-xs uppercase tracking-wider">
+            Pending Reviews
+          </p>
+          <p className={`text-2xl font-bold mt-1 ${pendingTotal > 0 ? 'text-yellow-400' : 'text-white'}`}>
+            {pendingTotal}
+          </p>
+          {pendingTotal > 0 && (
+            <p className="text-text-dim text-xs mt-1">
+              {summary?.pending_posts > 0 ? `${summary.pending_posts} post${summary.pending_posts > 1 ? 's' : ''}` : ''}
+              {summary?.pending_posts > 0 && summary?.pending_tasks > 0 ? ', ' : ''}
+              {summary?.pending_tasks > 0 ? `${summary.pending_tasks} task${summary.pending_tasks > 1 ? 's' : ''}` : ''}
+            </p>
+          )}
+        </div>
+        <div className="bg-card rounded-xl border border-border p-4">
+          <p className="text-text-dim text-xs uppercase tracking-wider">
+            Paige
+          </p>
+          <p className={`text-2xl font-bold mt-1 ${summary?.paige_status ? 'text-online' : 'text-offline'}`}>
+            {summary?.paige_status ? 'Online' : 'Offline'}
           </p>
         </div>
         <div className="bg-card rounded-xl border border-border p-4">
@@ -129,8 +159,16 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Bot Cards */}
-      <h3 className="text-lg font-semibold text-white mb-4">Bots</h3>
+      {/* Bot Cards + Disk Usage */}
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-lg font-semibold text-white">Bots</h3>
+        {summary?.disk_used && summary.disk_used !== '—' && (
+          <div className="flex items-center gap-2 text-sm text-text-dim">
+            <HardDrive size={14} />
+            <span>Disk: {summary.disk_used} / {summary.disk_total}</span>
+          </div>
+        )}
+      </div>
       <div className="grid grid-cols-2 gap-4 mb-8">
         {bots.map((bot) => (
           <BotCard key={bot.id} bot={bot} />
