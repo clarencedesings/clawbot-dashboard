@@ -2128,6 +2128,58 @@ async def paige_generate():
         return {"success": False, "error": str(e)}
 
 
+@app.delete("/api/paige/staged/{filename:path}")
+async def paige_delete_staged(filename: str):
+    safe = filename.replace("'", "'\\''")
+    try:
+        client = _ssh_connect()
+        sftp = client.open_sftp()
+        sftp.remove(f"{PAIGE_STAGED}/{filename}")
+        sftp.close()
+        client.close()
+        _paige_status_cache["data"] = None
+        return {"success": True, "message": f"Deleted draft: {filename}"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.delete("/api/paige/processed/{filename:path}")
+async def paige_delete_processed(filename: str):
+    safe = filename.replace("'", "'\\''")
+    try:
+        client = _ssh_connect()
+        sftp = client.open_sftp()
+
+        # Read the file to get the title for MongoDB deletion
+        try:
+            with sftp.open(f"{PAIGE_PROCESSED}/{filename}", "r") as f:
+                content = f.read().decode("utf-8", errors="replace")
+            meta = _parse_frontmatter(content)
+            title = meta["title"]
+        except Exception:
+            title = None
+
+        # Remove the file from processed/
+        sftp.remove(f"{PAIGE_PROCESSED}/{filename}")
+        sftp.close()
+
+        # Delete from MongoDB
+        if title:
+            cmd = f"python3 -c \"from pymongo import MongoClient; c = MongoClient(); c.coloring_store.blog_posts.delete_one({{'title': '{title.replace(chr(39), chr(92) + chr(39))}'}}); print('deleted')\""
+            _, stdout, _ = client.exec_command(cmd, timeout=10)
+            stdout.read()
+
+        # Also remove from blog dir and rebuild
+        blog_file = f"{PHYLLIS_BLOG_DIR}/{safe}"
+        client.exec_command(f"rm -f '{blog_file}'", timeout=5)
+
+        client.close()
+        _paige_status_cache["data"] = None
+        return {"success": True, "message": f"Deleted: {title or filename}"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 if __name__ == "__main__":
     import uvicorn
 

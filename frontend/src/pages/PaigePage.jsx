@@ -9,6 +9,7 @@ import {
   X,
   ExternalLink,
   Clipboard,
+  Trash2,
 } from 'lucide-react'
 
 export default function PaigePage() {
@@ -24,6 +25,7 @@ export default function PaigePage() {
   const [confirmReject, setConfirmReject] = useState(null)
   const [published, setPublished] = useState([])
   const [copiedPin, setCopiedPin] = useState(null)
+  const [confirmDelete, setConfirmDelete] = useState(null)
   const intervalRef = useRef(null)
   const genTimerRef = useRef(null)
 
@@ -117,6 +119,24 @@ export default function PaigePage() {
       })
       .catch(() => showToast('Failed to reach server', 'error'))
       .finally(() => setActionLoading((p) => ({ ...p, [filename]: null })))
+  }
+
+  const handleDelete = (type, filename) => {
+    setConfirmDelete(null)
+    const url = type === 'staged'
+      ? `/api/paige/staged/${encodeURIComponent(filename)}`
+      : `/api/paige/processed/${encodeURIComponent(filename)}`
+    fetch(url, { method: 'DELETE' })
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.success) {
+          showToast(d.message || 'Deleted')
+          fetchData()
+        } else {
+          showToast(d.error || 'Delete failed', 'error')
+        }
+      })
+      .catch(() => showToast('Failed to reach server', 'error'))
   }
 
   const renderMarkdown = (content) => {
@@ -303,6 +323,13 @@ export default function PaigePage() {
                         ? 'Rejecting...'
                         : 'Reject'}
                     </button>
+                    <button
+                      onClick={() => setConfirmDelete({ type: 'staged', filename: post.filename, title: post.title })}
+                      className="px-2 py-1.5 rounded-lg text-text-dim hover:text-red-400 transition-colors cursor-pointer"
+                      title="Delete"
+                    >
+                      <Trash2 size={14} />
+                    </button>
                   </div>
                 </div>
               </div>
@@ -376,6 +403,13 @@ export default function PaigePage() {
                       <Clipboard size={12} />
                       {copiedPin === post.filename ? 'Copied!' : 'Copy for Pinterest'}
                     </button>
+                    <button
+                      onClick={() => setConfirmDelete({ type: 'processed', filename: post.filename, title: post.title })}
+                      className="px-2 py-1.5 rounded-lg text-text-dim hover:text-red-400 transition-colors cursor-pointer"
+                      title="Delete"
+                    >
+                      <Trash2 size={14} />
+                    </button>
                   </div>
                 </div>
               </div>
@@ -420,6 +454,39 @@ export default function PaigePage() {
                   }}
                 />
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete confirmation modal */}
+      {confirmDelete && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-card border border-border rounded-xl p-6 w-full max-w-md shadow-xl">
+            <h3 className="text-white font-semibold text-lg mb-2">
+              Delete {confirmDelete.type === 'staged' ? 'Draft' : 'Published Post'}?
+            </h3>
+            <p className="text-text-dim text-sm mb-2">
+              &quot;{confirmDelete.title}&quot;
+            </p>
+            <p className="text-text-dim text-sm mb-6">
+              {confirmDelete.type === 'processed'
+                ? 'This will remove the file from processed/ and delete the blog post from the database. This cannot be undone.'
+                : 'This will permanently delete the draft. This cannot be undone.'}
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setConfirmDelete(null)}
+                className="px-4 py-2 rounded-lg text-sm font-medium bg-sidebar border border-border text-text-dim hover:text-white transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleDelete(confirmDelete.type, confirmDelete.filename)}
+                className="px-4 py-2 rounded-lg text-sm font-medium bg-red-600 hover:bg-red-500 text-white transition-colors cursor-pointer"
+              >
+                Yes, Delete
+              </button>
             </div>
           </div>
         </div>
