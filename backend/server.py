@@ -1734,6 +1734,13 @@ async def paige_processed():
                 if end != -1:
                     body = body[end + 3:].strip()
 
+            # Clean markdown artifacts
+            body = re.sub(r'^\*\*.*?\*\*\s*', '', body, flags=re.MULTILINE)
+            body = re.sub(r'^=+\s*', '', body, flags=re.MULTILINE)
+            body = re.sub(r'^-{3,}\s*', '', body, flags=re.MULTILINE)
+            body = re.sub(r'^\[Image description:.*?\]\s*', '', body, flags=re.MULTILINE)
+            body = body.strip()
+
             posts.append({
                 "filename": fname,
                 "title": meta["title"] or fname.replace(".md", "").replace("-", " ").title(),
