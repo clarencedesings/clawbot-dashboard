@@ -1480,7 +1480,7 @@ PAIGE_REJECTED = f"{PAIGE_DIR}/rejected"
 PHYLLIS_BLOG_DIR = "/home/clarence/PhyllisDiAnneStudio-App/frontend/public/blog"
 PHYLLIS_APP_DIR = "/home/clarence/PhyllisDiAnneStudio-App"
 PHYLLIS_CHAT_ID = "1540152448"
-PHYLLIS_BOT_TOKEN = "8775887330:AAHRHH75FSXWDwqc_6q0cCY8yAcXO9hcs2s"
+PHYLLIS_BOT_TOKEN = os.getenv("PHYLLIS_BOT_TOKEN", "")
 
 _paige_status_cache = {"data": None, "timestamp": 0}
 PAIGE_CACHE_TTL = 15
