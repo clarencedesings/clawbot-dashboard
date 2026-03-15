@@ -2223,6 +2223,45 @@ async def paige_processed():
         return {"posts": []}
 
 
+@app.get("/api/paige/cron-log")
+async def paige_cron_log():
+    try:
+        client = _ssh_connect()
+        _, stdout, _ = client.exec_command(
+            "tail -20 /home/clarence/paige/paige.log 2>/dev/null"
+        )
+        raw = stdout.read().decode("utf-8", errors="replace").strip()
+        client.close()
+
+        if not raw:
+            return {"lines": [], "last_run": None, "status": "unknown"}
+
+        lines = []
+        last_run = None
+        has_error = False
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            # Try to split timestamp from message (common format: "2026-03-15 14:00:01 - message")
+            ts = ""
+            msg = line
+            # Match ISO-ish timestamps at start
+            ts_match = re.match(r'^(\d{4}-\d{2}-\d{2}[\sT]\d{2}:\d{2}:\d{2})\s*[-—]\s*(.*)', line)
+            if ts_match:
+                ts = ts_match.group(1)
+                msg = ts_match.group(2)
+                last_run = ts
+            if re.search(r'error|traceback|exception|failed', line, re.IGNORECASE):
+                has_error = True
+            lines.append({"timestamp": ts, "message": msg})
+
+        status = "error" if has_error else "success"
+        return {"lines": lines, "last_run": last_run, "status": status}
+    except Exception as e:
+        return {"lines": [], "last_run": None, "status": "error", "error": str(e)}
+
+
 class ResendBody(BaseModel):
     feedback: str = ""
 

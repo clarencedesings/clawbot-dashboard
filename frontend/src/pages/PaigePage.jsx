@@ -11,6 +11,8 @@ import {
   Clipboard,
   Trash2,
   RotateCcw,
+  RefreshCw,
+  Terminal,
 } from 'lucide-react'
 
 export default function PaigePage() {
@@ -29,8 +31,19 @@ export default function PaigePage() {
   const [confirmDelete, setConfirmDelete] = useState(null)
   const [resendModal, setResendModal] = useState(null)
   const [resendFeedback, setResendFeedback] = useState('')
+  const [cronLog, setCronLog] = useState(null)
+  const [cronLoading, setCronLoading] = useState(false)
   const intervalRef = useRef(null)
   const genTimerRef = useRef(null)
+
+  const fetchCronLog = useCallback(() => {
+    setCronLoading(true)
+    fetch('/api/paige/cron-log')
+      .then((r) => r.json())
+      .then(setCronLog)
+      .catch(() => {})
+      .finally(() => setCronLoading(false))
+  }, [])
 
   const fetchData = useCallback(() => {
     Promise.all([
@@ -45,7 +58,8 @@ export default function PaigePage() {
       })
       .catch(() => {})
       .finally(() => setLoading(false))
-  }, [])
+    fetchCronLog()
+  }, [fetchCronLog])
 
   useEffect(() => {
     fetchData()
@@ -454,6 +468,61 @@ export default function PaigePage() {
             ))}
           </div>
         )}
+      </div>
+
+      {/* Cron Log */}
+      <div className="mb-6">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <Terminal size={18} className="text-text-dim" />
+            <h3 className="text-lg font-semibold text-white">Cron Log</h3>
+            {cronLog?.status && cronLog.status !== 'unknown' && (
+              cronLog.status === 'success' ? (
+                <CheckCircle size={16} className="text-green-400" />
+              ) : (
+                <XCircle size={16} className="text-red-400" />
+              )
+            )}
+          </div>
+          <button
+            onClick={fetchCronLog}
+            disabled={cronLoading}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-sidebar border border-border text-text-dim hover:text-white transition-colors cursor-pointer disabled:opacity-50"
+          >
+            <RefreshCw size={12} className={cronLoading ? 'animate-spin' : ''} />
+            Refresh
+          </button>
+        </div>
+
+        <div className="bg-card rounded-xl border border-border overflow-hidden">
+          {cronLog?.last_run && (
+            <div className="px-4 py-2.5 border-b border-border flex items-center gap-2 text-sm">
+              <span className="text-text-dim">Last run:</span>
+              <span className="text-white font-mono text-xs">{cronLog.last_run}</span>
+              {cronLog.status === 'success' ? (
+                <span className="text-xs px-2 py-0.5 rounded bg-green-500/15 text-green-400 ml-2">OK</span>
+              ) : cronLog.status === 'error' ? (
+                <span className="text-xs px-2 py-0.5 rounded bg-red-500/15 text-red-400 ml-2">Error</span>
+              ) : null}
+            </div>
+          )}
+          <div className="overflow-y-auto max-h-64 p-4">
+            {!cronLog || cronLog.lines.length === 0 ? (
+              <p className="text-text-dim text-sm italic text-center py-4">
+                {cronLoading ? 'Loading...' : 'No log entries found'}
+              </p>
+            ) : (
+              <pre className="text-xs font-mono text-text-dim leading-relaxed whitespace-pre-wrap">
+                {cronLog.lines.slice(-10).map((l, i) => (
+                  <div key={i} className={l.message && /error|traceback|exception|failed/i.test(l.message) ? 'text-red-400' : ''}>
+                    {l.timestamp && <span className="text-text-dim/60">{l.timestamp} </span>}
+                    {l.message}
+                  </div>
+                ))}
+              </pre>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Full post preview modal */}
