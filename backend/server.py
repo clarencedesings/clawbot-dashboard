@@ -326,13 +326,100 @@ async def health():
     return {"status": "ok"}
 
 
+def _format_age(ms):
+    """Convert milliseconds age to human readable string."""
+    if ms is None:
+        return "Never"
+    seconds = ms / 1000
+    if seconds < 60:
+        return "Just now"
+    minutes = seconds / 60
+    if minutes < 60:
+        return f"{int(minutes)}m ago"
+    hours = minutes / 60
+    if hours < 24:
+        return f"{int(hours)}h ago"
+    days = hours / 24
+    return f"{int(days)}d ago"
+
+
+def _get_openclaw_status() -> dict | None:
+    """Fetch openclaw status --json from CLAWBOT."""
+    try:
+        client = _ssh_connect()
+        _, stdout, _ = client.exec_command(
+            "/home/clarence/.npm-global/bin/openclaw status --json 2>/dev/null",
+            timeout=15,
+        )
+        raw = stdout.read().decode("utf-8", errors="replace").strip()
+        client.close()
+        if raw:
+            return json.loads(raw)
+    except Exception:
+        pass
+    return None
+
+
 @app.get("/api/bots")
 async def get_bots():
-    config = ssh_read_openclaw_config()
-    if config:
-        bots = bots_from_config(config)
-    else:
-        bots = MOCK_BOTS
+    status_data = _get_openclaw_status()
+    if not status_data:
+        # Fallback to config-based approach
+        config = ssh_read_openclaw_config()
+        if config:
+            bots = bots_from_config(config)
+        else:
+            bots = MOCK_BOTS
+        return {"bots": bots}
+
+    # Build lookup maps from status data
+    heartbeat_map = {}
+    for hb in status_data.get("heartbeat", {}).get("agents", []):
+        heartbeat_map[hb["agentId"]] = hb
+
+    agents_map = {}
+    for ag in status_data.get("agents", {}).get("agents", []):
+        agents_map[ag["id"]] = ag
+
+    sessions_map = {}
+    for sa in status_data.get("sessions", {}).get("byAgent", []):
+        sessions_map[sa["agentId"]] = sa
+
+    agent_names = {"main": "Jarvis", "business": "Business", "research": "Research", "coder": "Coder"}
+
+    bots = []
+    for agent_id in ("main", "business", "research", "coder"):
+        hb = heartbeat_map.get(agent_id, {})
+        ag = agents_map.get(agent_id, {})
+        sa = sessions_map.get(agent_id, {})
+        recent = sa.get("recent", [])
+
+        # Status from heartbeat
+        is_online = hb.get("enabled", False)
+
+        # Model from most recent session
+        model = recent[0].get("model", "unknown") if recent else "unknown"
+
+        # Last active from agent data
+        last_active = _format_age(ag.get("lastActiveAgeMs"))
+
+        # Sessions count
+        sessions = ag.get("sessionsCount", 0)
+
+        # Context used from most recent session
+        context_used = recent[0].get("percentUsed") if recent else None
+
+        bots.append({
+            "id": agent_id,
+            "name": agent_names.get(agent_id, agent_id.capitalize()),
+            "role": agent_id,
+            "status": "online" if is_online else "offline",
+            "model": model,
+            "last_active": last_active,
+            "sessions": sessions,
+            "context_used": context_used,
+        })
+
     return {"bots": bots}
 
 

@@ -28,16 +28,18 @@ export default function BotCard({ bot }) {
           <span className="text-white">{bot.model}</span>
         </div>
         <div className="flex justify-between">
-          <span className="text-text-dim">Uptime</span>
-          <span className="text-white">{bot.uptime}</span>
-        </div>
-        <div className="flex justify-between">
-          <span className="text-text-dim">Requests Today</span>
-          <span className="text-white">{bot.requests_today}</span>
-        </div>
-        <div className="flex justify-between">
           <span className="text-text-dim">Last Active</span>
-          <span className="text-white">{bot.last_active}</span>
+          <span className="text-white">{bot.last_active || '—'}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-text-dim">Sessions</span>
+          <span className="text-white">{bot.sessions ?? '—'}</span>
+        </div>
+        <div className="flex justify-between">
+          <span className="text-text-dim">Context Used</span>
+          <span className="text-white">
+            {bot.context_used != null ? `${bot.context_used}%` : '—'}
+          </span>
         </div>
       </div>
     </div>
