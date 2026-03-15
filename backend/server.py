@@ -1466,13 +1466,21 @@ async def tasks_send(body: SendCommandBody):
 
     sent_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
+    # Prepend system instruction for sub-agents
+    _AGENT_INSTRUCTIONS = {
+        "business": "[INST] You are a business advisor. Answer directly with practical, actionable business advice. Do NOT use any tools, subagents, or file operations. [/INST] ",
+        "research": "[INST] You are a research assistant. Answer directly with well-researched, informative answers. Do NOT use any tools, subagents, or file operations. [/INST] ",
+        "coder": "[INST] You are a coding assistant. Answer directly with code and technical explanations. Do NOT use any tools, subagents, or file operations. [/INST] ",
+    }
+
     # Build the command
     if agent == "paige":
         safe_msg = message.replace("'", "'\\''")
         cmd = f"cd /home/clarence/paige && python3 paige.py --topic '{safe_msg}'"
     else:
         target = _AGENT_TARGETS.get(agent, _AGENT_TARGETS["main"])
-        safe_msg = message.replace("'", "'\\''")
+        full_msg = _AGENT_INSTRUCTIONS.get(agent, "") + message
+        safe_msg = full_msg.replace("'", "'\\''")
         cmd = f"/home/clarence/.npm-global/bin/openclaw agent --channel telegram --to {target['to']} --agent {target['agent']} --message '{safe_msg}' --deliver --reply-channel telegram --reply-to {target['to']}"
 
     try:
