@@ -1326,39 +1326,78 @@ async def tasks_send(body: SendCommandBody):
     if not message:
         return {"success": False, "error": "Message is empty"}
 
-    queued_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-    task_id = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    filename = f"{task_id}-{agent}.json"
+    sent_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
-    task_data = {
-        "agent": agent,
-        "message": message,
-        "queued_at": queued_at,
-    }
+    # Build the command
+    if agent == "paige":
+        safe_msg = message.replace("'", "'\\''")
+        cmd = f"cd /home/clarence/paige && python3 paige.py --topic '{safe_msg}'"
+    else:
+        target = _AGENT_TARGETS.get(agent, _AGENT_TARGETS["main"])
+        safe_msg = message.replace("'", "'\\''")
+        cmd = f"/home/clarence/.npm-global/bin/openclaw agent --channel telegram --to {target['to']} --agent {target['agent']} --message '{safe_msg}' --deliver --reply-channel telegram --reply-to {target['to']}"
 
     try:
         client = _ssh_connect()
+        _, stdout, stderr = client.exec_command(cmd, timeout=300)
+        out = stdout.read().decode("utf-8", errors="replace").strip()
+        err = stderr.read().decode("utf-8", errors="replace").strip()
+        success = "error" not in (err or "").lower()
+        response = out or err or None
+
+        # Jarvis (main) and Paige: execute immediately, no queue
+        if agent in ("main", "paige"):
+            client.close()
+            history = _load_tasks_history()
+            history.insert(0, {
+                "message": message,
+                "agent": agent,
+                "sent_at": sent_at,
+                "status": "sent" if success else "failed",
+                "response": response,
+            })
+            _save_tasks_history(history[:50])
+            return {"success": success, "sent_at": sent_at, "response": response}
+
+        # Business, Research, Coder: save response to pending queue for review
+        task_id = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        filename = f"{task_id}-{agent}.json"
+        task_data = {
+            "agent": agent,
+            "task": message,
+            "response": response,
+            "timestamp": sent_at,
+            "exec_success": success,
+        }
+
         sftp = client.open_sftp()
-        filepath = f"{AGENT_QUEUE_PENDING}/{filename}"
-        with sftp.open(filepath, "w") as f:
+        with sftp.open(f"{AGENT_QUEUE_PENDING}/{filename}", "w") as f:
             f.write(json.dumps(task_data, indent=2))
         sftp.close()
         client.close()
 
-        # Save to history as queued
         history = _load_tasks_history()
         history.insert(0, {
             "message": message,
             "agent": agent,
-            "sent_at": queued_at,
-            "status": "queued",
-            "response": None,
+            "sent_at": sent_at,
+            "status": "pending_review",
+            "response": response,
         })
         _save_tasks_history(history[:50])
 
-        return {"success": True, "status": "queued", "sent_at": queued_at, "filename": filename}
+        return {"success": True, "status": "pending_review", "sent_at": sent_at, "response": response}
     except Exception as e:
-        return {"success": False, "error": str(e), "sent_at": queued_at}
+        history = _load_tasks_history()
+        history.insert(0, {
+            "message": message,
+            "agent": agent,
+            "sent_at": sent_at,
+            "status": "failed",
+            "response": str(e),
+        })
+        _save_tasks_history(history[:50])
+        return {"success": False, "error": str(e), "sent_at": sent_at}
 
 
 @app.get("/api/tasks/history")
@@ -1392,13 +1431,16 @@ async def tasks_pending():
         return {"tasks": []}
 
 
+class ApproveTaskBody(BaseModel):
+    destination: str = "telegram"  # "telegram" or "file"
+
+
 class DenyTaskBody(BaseModel):
     reason: str = ""
 
 
 @app.post("/api/tasks/approve/{filename:path}")
-async def tasks_approve(filename: str):
-    safe = filename.replace("'", "'\\''")
+async def tasks_approve(filename: str, body: ApproveTaskBody = ApproveTaskBody()):
     try:
         client = _ssh_connect()
         sftp = client.open_sftp()
@@ -1408,32 +1450,35 @@ async def tasks_approve(filename: str):
             task = json.loads(f.read().decode("utf-8"))
 
         agent = task.get("agent", "main")
-        message = task.get("message", "")
+        response = task.get("response", "")
+        original_task = task.get("task", "")
 
-        # Build the command
-        if agent == "paige":
-            safe_msg = message.replace("'", "'\\''")
-            cmd = f"cd /home/clarence/paige && python3 paige.py --topic '{safe_msg}'"
-        else:
-            target = _AGENT_TARGETS.get(agent, _AGENT_TARGETS["main"])
-            safe_msg = message.replace("'", "'\\''")
-            cmd = f"/home/clarence/.npm-global/bin/openclaw agent --channel telegram --to {target['to']} --agent {target['agent']} --message '{safe_msg}' --deliver --reply-channel telegram --reply-to {target['to']}"
-
-        # Execute the command
-        _, stdout, stderr = client.exec_command(cmd, timeout=300)
-        out = stdout.read().decode("utf-8", errors="replace").strip()
-        err = stderr.read().decode("utf-8", errors="replace").strip()
-        success = "error" not in (err or "").lower()
-
-        # Add result to task and move to approved
         task["approved_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         task["status"] = "approved"
-        task["response"] = out or err or None
-        task["exec_success"] = success
+        task["destination"] = body.destination
+
+        if body.destination == "telegram":
+            # Send the response to Telegram
+            target = _AGENT_TARGETS.get(agent, _AGENT_TARGETS["main"])
+            safe_resp = (response or "No response").replace("'", "'\\''")
+            cmd = (
+                f"/home/clarence/.npm-global/bin/openclaw agent --channel telegram "
+                f"--to {target['to']} --agent {target['agent']} "
+                f"--message '{safe_resp}' --deliver --reply-channel telegram --reply-to {target['to']}"
+            )
+            _, stdout, stderr = client.exec_command(cmd, timeout=60)
+            stdout.read()
+            _send_telegram_phyllis(f"✅ Approved ({agent}): {original_task[:80]}")
+        else:
+            # Save as text file
+            txt_filename = filename.replace(".json", ".txt")
+            txt_content = f"Agent: {agent}\nTask: {original_task}\nTimestamp: {task.get('timestamp', '')}\nApproved: {task['approved_at']}\n\n--- Response ---\n{response or 'No response'}\n"
+            with sftp.open(f"{AGENT_QUEUE_APPROVED}/{txt_filename}", "w") as f:
+                f.write(txt_content)
+
+        # Move JSON to approved
         with sftp.open(f"{AGENT_QUEUE_APPROVED}/{filename}", "w") as f:
             f.write(json.dumps(task, indent=2))
-
-        # Remove from pending
         sftp.remove(f"{AGENT_QUEUE_PENDING}/{filename}")
         sftp.close()
         client.close()
@@ -1441,16 +1486,13 @@ async def tasks_approve(filename: str):
         # Update local history
         history = _load_tasks_history()
         for h in history:
-            if h.get("message") == message and h.get("status") == "queued":
-                h["status"] = "sent" if success else "failed"
-                h["response"] = out or err or None
+            if h.get("message") == original_task and h.get("status") == "pending_review":
+                h["status"] = "approved"
                 break
         _save_tasks_history(history[:50])
 
-        # Telegram notification
-        _send_telegram_phyllis(f"✅ Agent task approved and executed:\n<b>{agent}</b>: {message[:100]}")
-
-        return {"success": True, "message": f"Approved and executed: {agent}", "response": out or err or None}
+        dest_label = "Telegram" if body.destination == "telegram" else "file"
+        return {"success": True, "message": f"Approved and sent to {dest_label}: {agent}"}
     except Exception as e:
         return {"success": False, "error": str(e)}
 
@@ -1465,13 +1507,48 @@ async def tasks_deny(filename: str, body: DenyTaskBody = DenyTaskBody()):
         with sftp.open(f"{AGENT_QUEUE_PENDING}/{filename}", "r") as f:
             task = json.loads(f.read().decode("utf-8"))
 
-        # Add denial info and move
+        agent = task.get("agent", "main")
+        original_task = task.get("task", "")
+        reason = body.reason or "No specific feedback given"
+
+        # Send the task back to the agent with feedback
+        redo_msg = f"Please redo this task. Feedback: {reason}\n\nOriginal task: {original_task}"
+        target = _AGENT_TARGETS.get(agent, _AGENT_TARGETS["main"])
+        safe_msg = redo_msg.replace("'", "'\\''")
+        cmd = (
+            f"/home/clarence/.npm-global/bin/openclaw agent --channel telegram "
+            f"--to {target['to']} --agent {target['agent']} "
+            f"--message '{safe_msg}' --deliver --reply-channel telegram --reply-to {target['to']}"
+        )
+        _, stdout, stderr = client.exec_command(cmd, timeout=300)
+        out = stdout.read().decode("utf-8", errors="replace").strip()
+        err = stderr.read().decode("utf-8", errors="replace").strip()
+        redo_response = out or err or None
+
+        # Save denied task with redo response
         task["denied_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         task["status"] = "denied"
         task["reason"] = body.reason
+        task["redo_response"] = redo_response
+
+        # The redo response goes into a new pending task
+        new_task_id = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        new_filename = f"{new_task_id}-{agent}-redo.json"
+        new_task = {
+            "agent": agent,
+            "task": original_task,
+            "response": redo_response,
+            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+            "exec_success": True,
+            "is_redo": True,
+            "deny_reason": body.reason,
+        }
+        with sftp.open(f"{AGENT_QUEUE_PENDING}/{new_filename}", "w") as f:
+            f.write(json.dumps(new_task, indent=2))
+
+        # Move original to denied
         with sftp.open(f"{AGENT_QUEUE_DENIED}/{filename}", "w") as f:
             f.write(json.dumps(task, indent=2))
-
         sftp.remove(f"{AGENT_QUEUE_PENDING}/{filename}")
         sftp.close()
         client.close()
@@ -1479,12 +1556,19 @@ async def tasks_deny(filename: str, body: DenyTaskBody = DenyTaskBody()):
         # Update local history
         history = _load_tasks_history()
         for h in history:
-            if h.get("message") == task.get("message") and h.get("status") == "queued":
+            if h.get("message") == original_task and h.get("status") == "pending_review":
                 h["status"] = "denied"
                 break
+        history.insert(0, {
+            "message": original_task,
+            "agent": agent,
+            "sent_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+            "status": "pending_review",
+            "response": redo_response,
+        })
         _save_tasks_history(history[:50])
 
-        return {"success": True, "message": f"Denied: {task.get('agent', 'unknown')}"}
+        return {"success": True, "message": f"Denied and re-sent to {agent} with feedback"}
     except Exception as e:
         return {"success": False, "error": str(e)}
 

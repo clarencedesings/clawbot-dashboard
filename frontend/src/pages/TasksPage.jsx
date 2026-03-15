@@ -145,7 +145,11 @@ export default function TasksPage() {
             className="bg-accent hover:bg-accent-hover text-white px-5 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer flex items-center gap-2"
           >
             <Send size={14} />
-            {sending ? 'Queuing...' : 'Queue Command'}
+            {sending
+              ? 'Sending...'
+              : agent === 'main' || agent === 'paige'
+                ? 'Send Command'
+                : 'Send & Queue Review'}
           </button>
           <span className="text-text-dim text-xs ml-auto">Ctrl+Enter to send</span>
         </div>
@@ -165,9 +169,9 @@ export default function TasksPage() {
             <div className="divide-y divide-border/50">
               {history.slice(0, 5).map((item, i) => (
                 <div key={i} className="px-6 py-3 flex items-start gap-3">
-                  {item.status === 'sent' ? (
+                  {item.status === 'sent' || item.status === 'approved' ? (
                     <CheckCircle size={16} className="text-green-400 shrink-0 mt-0.5" />
-                  ) : item.status === 'queued' ? (
+                  ) : item.status === 'queued' || item.status === 'pending_review' ? (
                     <Clock size={16} className="text-yellow-400 shrink-0 mt-0.5" />
                   ) : (
                     <XCircle size={16} className="text-red-400 shrink-0 mt-0.5" />
@@ -179,6 +183,10 @@ export default function TasksPage() {
                       <span>{item.sent_at}</span>
                       {item.status === 'sent' ? (
                         <span className="text-green-400">Sent</span>
+                      ) : item.status === 'approved' ? (
+                        <span className="text-green-400">Approved</span>
+                      ) : item.status === 'pending_review' ? (
+                        <span className="text-yellow-400">Pending Review</span>
                       ) : item.status === 'queued' ? (
                         <span className="text-yellow-400">Queued</span>
                       ) : item.status === 'denied' ? (
