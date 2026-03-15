@@ -11,6 +11,7 @@ import {
   BrainCircuit,
   Store,
   Coffee,
+  PenLine,
 } from 'lucide-react'
 
 const NAV_ITEMS = [
@@ -24,6 +25,7 @@ const NAV_ITEMS = [
   { to: '/memory', label: 'Memory', icon: BrainCircuit },
   { to: '/store', label: 'Store', icon: Store },
   { to: '/kofi', label: 'Ko-fi', icon: Coffee },
+  { to: '/paige', label: 'Paige', icon: PenLine },
 ]
 
 export default function Sidebar() {

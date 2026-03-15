@@ -10,6 +10,7 @@ import TokensPage from './pages/TokensPage'
 import MemoryPage from './pages/MemoryPage'
 import StorePage from './pages/StorePage'
 import KofiPage from './pages/KofiPage'
+import PaigePage from './pages/PaigePage'
 import SettingsPage from './pages/SettingsPage'
 
 export default function App() {
@@ -28,6 +29,7 @@ export default function App() {
           <Route path="/memory" element={<MemoryPage />} />
           <Route path="/store" element={<StorePage />} />
           <Route path="/kofi" element={<KofiPage />} />
+          <Route path="/paige" element={<PaigePage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Routes>
       </main>

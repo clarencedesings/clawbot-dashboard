@@ -1464,6 +1464,259 @@ async def openclaw_config():
     return config
 
 
+# ---------------------------------------------------------------------------
+# Paige – AI Blog Writer for Phyllis Dianne Studio
+# ---------------------------------------------------------------------------
+
+PAIGE_DIR = "/home/clarence/paige"
+PAIGE_STAGED = f"{PAIGE_DIR}/staged"
+PAIGE_PROCESSED = f"{PAIGE_DIR}/processed"
+PAIGE_REJECTED = f"{PAIGE_DIR}/rejected"
+PHYLLIS_BLOG_DIR = "/home/clarence/PhyllisDiAnneStudio-App/frontend/public/blog"
+PHYLLIS_APP_DIR = "/home/clarence/PhyllisDiAnneStudio-App"
+PHYLLIS_CHAT_ID = "1540152448"
+PHYLLIS_BOT_TOKEN = "8775887330:AAHRHH75FSXWDwqc_6q0cCY8yAcXO9hcs2s"
+
+_paige_status_cache = {"data": None, "timestamp": 0}
+PAIGE_CACHE_TTL = 15
+
+
+def _parse_frontmatter(raw: str) -> dict:
+    """Extract YAML frontmatter fields from markdown text."""
+    meta = {"title": "", "date": "", "description": ""}
+    if not raw.startswith("---"):
+        return meta
+    end = raw.find("---", 3)
+    if end == -1:
+        return meta
+    block = raw[3:end]
+    for line in block.splitlines():
+        if ":" in line:
+            key, _, val = line.partition(":")
+            key = key.strip().lower()
+            val = val.strip().strip('"').strip("'")
+            if key in meta:
+                meta[key] = val
+    return meta
+
+
+def _send_telegram_phyllis(message: str):
+    """Send a Telegram message to Phyllis via SSH curl."""
+    safe = message.replace("'", "'\\''")
+    cmd = (
+        f"curl -s -X POST 'https://api.telegram.org/bot{PHYLLIS_BOT_TOKEN}/sendMessage' "
+        f"-d chat_id={PHYLLIS_CHAT_ID} -d text='{safe}' -d parse_mode=HTML"
+    )
+    try:
+        client = _ssh_connect()
+        client.exec_command(cmd, timeout=10)
+        client.close()
+    except Exception:
+        pass
+
+
+@app.get("/api/paige/status")
+async def paige_status():
+    now = time.time()
+    if _paige_status_cache["data"] is not None and (now - _paige_status_cache["timestamp"]) < PAIGE_CACHE_TTL:
+        return _paige_status_cache["data"]
+
+    try:
+        client = _ssh_connect()
+        cmd = (
+            "pgrep -f paige_webhook > /dev/null 2>&1 && echo ONLINE || echo OFFLINE; "
+            f"find {PAIGE_STAGED} -name '*.md' 2>/dev/null | wc -l; "
+            f"find {PAIGE_PROCESSED} -name '*.md' 2>/dev/null | wc -l; "
+            f"find {PAIGE_REJECTED} -name '*.md' 2>/dev/null | wc -l"
+        )
+        _, stdout, _ = client.exec_command(cmd, timeout=10)
+        lines = stdout.read().decode("utf-8", errors="replace").strip().splitlines()
+        client.close()
+
+        result = {
+            "status": "online" if lines[0].strip() == "ONLINE" else "offline",
+            "staged_count": int(lines[1].strip()) if len(lines) > 1 else 0,
+            "processed_count": int(lines[2].strip()) if len(lines) > 2 else 0,
+            "rejected_count": int(lines[3].strip()) if len(lines) > 3 else 0,
+        }
+        _paige_status_cache["data"] = result
+        _paige_status_cache["timestamp"] = now
+        return result
+    except Exception:
+        return _paige_status_cache["data"] or {
+            "status": "offline",
+            "staged_count": 0,
+            "processed_count": 0,
+            "rejected_count": 0,
+        }
+
+
+@app.get("/api/paige/staged")
+async def paige_staged():
+    try:
+        client = _ssh_connect()
+        # List .md files with sizes
+        cmd = f"find {PAIGE_STAGED} -name '*.md' -printf '%f\\n' 2>/dev/null"
+        _, stdout, _ = client.exec_command(cmd, timeout=10)
+        filenames = [f.strip() for f in stdout.read().decode("utf-8", errors="replace").strip().splitlines() if f.strip()]
+
+        posts = []
+        for fname in filenames:
+            filepath = f"{PAIGE_STAGED}/{fname}"
+            cmd2 = f"cat '{filepath}' 2>/dev/null; echo '___PAIGE_SIZE___'; stat -c%s '{filepath}' 2>/dev/null"
+            _, stdout2, _ = client.exec_command(cmd2, timeout=10)
+            output = stdout2.read().decode("utf-8", errors="replace")
+            parts = output.rsplit("___PAIGE_SIZE___", 1)
+            content = parts[0].strip() if parts else ""
+            size = int(parts[1].strip()) if len(parts) > 1 and parts[1].strip().isdigit() else 0
+            meta = _parse_frontmatter(content)
+
+            # Strip frontmatter for preview
+            body = content
+            if body.startswith("---"):
+                end = body.find("---", 3)
+                if end != -1:
+                    body = body[end + 3:].strip()
+
+            posts.append({
+                "filename": fname,
+                "title": meta["title"] or fname.replace(".md", "").replace("-", " ").title(),
+                "date": meta["date"],
+                "description": meta["description"],
+                "preview": body[:500],
+                "size": size,
+            })
+
+        client.close()
+        return {"posts": posts}
+    except Exception:
+        return {"posts": []}
+
+
+@app.get("/api/paige/staged/{filename:path}")
+async def paige_staged_file(filename: str):
+    safe = filename.replace("'", "'\\''")
+    try:
+        client = _ssh_connect()
+        cmd = f"cat '{PAIGE_STAGED}/{safe}'"
+        _, stdout, _ = client.exec_command(cmd, timeout=10)
+        content = stdout.read().decode("utf-8", errors="replace")
+        client.close()
+
+        meta = _parse_frontmatter(content)
+        return {
+            "filename": filename,
+            "title": meta["title"] or filename.replace(".md", "").replace("-", " ").title(),
+            "date": meta["date"],
+            "description": meta["description"],
+            "content": content,
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.post("/api/paige/approve/{filename:path}")
+async def paige_approve(filename: str):
+    safe = filename.replace("'", "'\\''")
+    try:
+        client = _ssh_connect()
+
+        # Read full file content for frontmatter + body
+        _, stdout, _ = client.exec_command(f"cat '{PAIGE_STAGED}/{safe}'", timeout=10)
+        content = stdout.read().decode("utf-8", errors="replace")
+        meta = _parse_frontmatter(content)
+        title = meta["title"] or filename.replace(".md", "").replace("-", " ").title()
+        safe_title = title.replace("'", "'\\''")
+
+        # Strip frontmatter to get body
+        body = content
+        if body.startswith("---"):
+            end = body.find("---", 3)
+            if end != -1:
+                body = body[end + 3:].strip()
+
+        # Clean body before posting to MongoDB
+        body = re.sub(r'^\*\*.*?\*\*\s*', '', body, flags=re.MULTILINE)
+        body = re.sub(r'^=+\s*', '', body, flags=re.MULTILINE)
+        body = re.sub(r'^-{3,}\s*', '', body, flags=re.MULTILINE)
+        body = body.strip()
+
+        # Post to Phyllis blog API
+        import requests
+        try:
+            requests.post(
+                "http://192.168.0.130:8001/api/admin/blog",
+                json={"title": title, "body": body},
+                headers={"x-admin-token": "phyllis-admin-token-2024"},
+                timeout=10,
+            )
+        except Exception:
+            pass  # non-blocking; file deploy below is the primary path
+
+        # Copy to blog dir, git commit, rebuild, move to processed
+        sudo_pass = os.getenv("SUDO_PASS", "")
+        cmds = " && ".join([
+            f"cp '{PAIGE_STAGED}/{safe}' '{PHYLLIS_BLOG_DIR}/{safe}'",
+            f"cd {PHYLLIS_APP_DIR} && git add -A && git commit -m 'Paige: publish {safe_title}' && git push",
+            f"cd {PHYLLIS_APP_DIR}/frontend && npm run build && echo '{sudo_pass}' | sudo -S systemctl restart phyllis-frontend.service",
+            f"mv '{PAIGE_STAGED}/{safe}' '{PAIGE_PROCESSED}/{safe}'",
+        ])
+        _, stdout, stderr = client.exec_command(cmds, timeout=120)
+        out = stdout.read().decode("utf-8", errors="replace")
+        err = stderr.read().decode("utf-8", errors="replace")
+        client.close()
+
+        # Send Telegram notification
+        _send_telegram_phyllis(
+            f"✅ Blog post published! Title: {title} — Live at https://phyllisdiannestudio.com/blog"
+        )
+
+        # Invalidate status cache
+        _paige_status_cache["data"] = None
+
+        return {"success": True, "message": f"Published: {title}"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/paige/reject/{filename:path}")
+async def paige_reject(filename: str):
+    safe = filename.replace("'", "'\\''")
+    try:
+        client = _ssh_connect()
+
+        # Read title
+        _, stdout, _ = client.exec_command(f"head -20 '{PAIGE_STAGED}/{safe}'", timeout=10)
+        header = stdout.read().decode("utf-8", errors="replace")
+        meta = _parse_frontmatter(header)
+        title = meta["title"] or filename.replace(".md", "").replace("-", " ").title()
+
+        # Move to rejected
+        cmd = f"mv '{PAIGE_STAGED}/{safe}' '{PAIGE_REJECTED}/{safe}'"
+        _, stdout, stderr = client.exec_command(cmd, timeout=10)
+        stdout.read()
+        client.close()
+
+        _send_telegram_phyllis(f"❌ Post rejected and archived: {title}")
+        _paige_status_cache["data"] = None
+
+        return {"success": True, "message": f"Rejected: {title}"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@app.post("/api/paige/generate")
+async def paige_generate():
+    try:
+        client = _ssh_connect()
+        cmd = f"cd {PAIGE_DIR} && python3 paige.py"
+        client.exec_command(cmd, timeout=5)
+        client.close()
+        return {"success": True, "message": "Paige is writing a new post..."}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 if __name__ == "__main__":
     import uvicorn
 
