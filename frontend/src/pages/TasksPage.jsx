@@ -15,6 +15,7 @@ const AGENTS = [
   { id: 'business', label: 'Business' },
   { id: 'research', label: 'Research' },
   { id: 'coder', label: 'Coder' },
+  { id: 'paige', label: 'Paige (Blog Writer)' },
 ]
 
 export default function TasksPage() {

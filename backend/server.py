@@ -1322,10 +1322,15 @@ async def tasks_send(body: SendCommandBody):
     if not message:
         return {"success": False, "error": "Message is empty"}
 
-    target = _AGENT_TARGETS.get(agent, _AGENT_TARGETS["main"])
-    # Escape single quotes in the message for the shell command
-    safe_msg = message.replace("'", "'\\''")
-    cmd = f"openclaw message send --channel telegram --target {target} --message '{safe_msg}'"
+    # Special case: Paige runs paige.py instead of openclaw message
+    if agent == "paige":
+        safe_msg = message.replace("'", "'\\''")
+        cmd = f"cd /home/clarence/paige && python3 paige.py --topic '{safe_msg}'"
+    else:
+        target = _AGENT_TARGETS.get(agent, _AGENT_TARGETS["main"])
+        # Escape single quotes in the message for the shell command
+        safe_msg = message.replace("'", "'\\''")
+        cmd = f"openclaw message send --channel telegram --target {target} --message '{safe_msg}'"
 
     sent_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     try:
