@@ -2077,6 +2077,46 @@ async def paige_staged_file(filename: str):
         return {"error": str(e)}
 
 
+class EditStagedBody(BaseModel):
+    title: str
+    body: str
+
+
+@app.put("/api/paige/staged/{filename:path}")
+async def paige_staged_edit(filename: str, payload: EditStagedBody):
+    safe = filename.replace("'", "'\\''")
+    try:
+        client = _ssh_connect()
+        # Read existing file to preserve frontmatter
+        _, stdout, _ = client.exec_command(f"cat '{PAIGE_STAGED}/{safe}'", timeout=10)
+        content = stdout.read().decode("utf-8", errors="replace")
+
+        # Rebuild frontmatter with updated title, preserve other fields
+        meta = _parse_frontmatter(content)
+        fm_lines = [
+            "---",
+            f'title: "{payload.title}"',
+        ]
+        if meta["date"]:
+            fm_lines.append(f'date: "{meta["date"]}"')
+        if meta["description"]:
+            fm_lines.append(f'description: "{meta["description"]}"')
+        fm_lines.append("---")
+
+        new_content = "\n".join(fm_lines) + "\n\n" + payload.body.strip() + "\n"
+
+        # Write back via sftp
+        sftp = client.open_sftp()
+        filepath = f"{PAIGE_STAGED}/{filename}"
+        with sftp.open(filepath, "w") as f:
+            f.write(new_content)
+        sftp.close()
+        client.close()
+        return {"success": True, "message": "Post updated"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
 @app.post("/api/paige/approve/{filename:path}")
 async def paige_approve(filename: str):
     safe = filename.replace("'", "'\\''")

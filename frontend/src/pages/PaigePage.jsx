@@ -13,6 +13,7 @@ import {
   RotateCcw,
   RefreshCw,
   Terminal,
+  Edit3,
 } from 'lucide-react'
 
 export default function PaigePage() {
@@ -33,6 +34,10 @@ export default function PaigePage() {
   const [resendFeedback, setResendFeedback] = useState('')
   const [cronLog, setCronLog] = useState(null)
   const [cronLoading, setCronLoading] = useState(false)
+  const [editModal, setEditModal] = useState(null)
+  const [editTitle, setEditTitle] = useState('')
+  const [editBody, setEditBody] = useState('')
+  const [editLoading, setEditLoading] = useState(false)
   const intervalRef = useRef(null)
   const genTimerRef = useRef(null)
 
@@ -176,6 +181,44 @@ export default function PaigePage() {
       })
       .catch(() => showToast('Failed to reach server', 'error'))
       .finally(() => setActionLoading((p) => ({ ...p, [filename]: null })))
+  }
+
+  const handleEditOpen = (filename) => {
+    fetch(`/api/paige/staged/${encodeURIComponent(filename)}`)
+      .then((r) => r.json())
+      .then((data) => {
+        let body = data.content || ''
+        if (body.startsWith('---')) {
+          const end = body.indexOf('---', 3)
+          if (end !== -1) body = body.slice(end + 3).trim()
+        }
+        setEditTitle(data.title || '')
+        setEditBody(body)
+        setEditModal(filename)
+      })
+      .catch(() => showToast('Failed to load post for editing', 'error'))
+  }
+
+  const handleEditSave = () => {
+    if (!editModal) return
+    setEditLoading(true)
+    fetch(`/api/paige/staged/${encodeURIComponent(editModal)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: editTitle, body: editBody }),
+    })
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.success) {
+          showToast('Post updated')
+          setEditModal(null)
+          fetchData()
+        } else {
+          showToast(d.error || 'Save failed', 'error')
+        }
+      })
+      .catch(() => showToast('Failed to reach server', 'error'))
+      .finally(() => setEditLoading(false))
   }
 
   const renderMarkdown = (content) => {
@@ -343,6 +386,13 @@ export default function PaigePage() {
                       className="px-3 py-1.5 rounded-lg text-xs font-medium bg-sidebar border border-border text-text-dim hover:text-white transition-colors cursor-pointer"
                     >
                       Preview
+                    </button>
+                    <button
+                      onClick={() => handleEditOpen(post.filename)}
+                      className="px-3 py-1.5 rounded-lg text-xs font-medium bg-sidebar border border-border text-text-dim hover:text-white transition-colors cursor-pointer flex items-center gap-1"
+                    >
+                      <Edit3 size={12} />
+                      Edit
                     </button>
                     <button
                       onClick={() => handleApprove(post.filename)}
@@ -524,6 +574,58 @@ export default function PaigePage() {
           </div>
         </div>
       </div>
+
+      {/* Edit post modal */}
+      {editModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <div className="bg-card border border-border rounded-xl shadow-xl w-full max-w-3xl max-h-[85vh] flex flex-col">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-border shrink-0">
+              <h3 className="text-white font-semibold text-lg">Edit Post</h3>
+              <button
+                onClick={() => setEditModal(null)}
+                className="text-text-dim hover:text-white transition-colors cursor-pointer"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div className="p-6 overflow-y-auto flex-1 space-y-4">
+              <div>
+                <label className="text-text-dim text-xs uppercase tracking-wider block mb-1.5">Title</label>
+                <input
+                  type="text"
+                  value={editTitle}
+                  onChange={(e) => setEditTitle(e.target.value)}
+                  className="w-full bg-sidebar border border-border rounded-lg px-4 py-2.5 text-white text-sm focus:outline-none focus:border-accent"
+                />
+              </div>
+              <div>
+                <label className="text-text-dim text-xs uppercase tracking-wider block mb-1.5">Body</label>
+                <textarea
+                  value={editBody}
+                  onChange={(e) => setEditBody(e.target.value)}
+                  rows={18}
+                  className="w-full bg-sidebar border border-border rounded-lg px-4 py-3 text-white text-sm font-mono leading-relaxed focus:outline-none focus:border-accent resize-none"
+                />
+              </div>
+            </div>
+            <div className="flex justify-end gap-3 px-6 py-4 border-t border-border shrink-0">
+              <button
+                onClick={() => setEditModal(null)}
+                className="px-4 py-2 rounded-lg text-sm font-medium bg-sidebar border border-border text-text-dim hover:text-white transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleEditSave}
+                disabled={editLoading}
+                className="px-4 py-2 rounded-lg text-sm font-medium bg-accent hover:bg-accent-hover text-white transition-colors cursor-pointer disabled:opacity-50"
+              >
+                {editLoading ? 'Saving...' : 'Save Changes'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Full post preview modal */}
       {previewPost && (
