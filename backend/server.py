@@ -1711,6 +1711,42 @@ async def paige_reject(filename: str):
         return {"success": False, "error": str(e)}
 
 
+@app.get("/api/paige/processed")
+async def paige_processed():
+    try:
+        client = _ssh_connect()
+        cmd = f"find {PAIGE_PROCESSED} -name '*.md' -printf '%f\\n' 2>/dev/null | sort -r"
+        _, stdout, _ = client.exec_command(cmd, timeout=10)
+        filenames = [f.strip() for f in stdout.read().decode("utf-8", errors="replace").strip().splitlines() if f.strip()]
+
+        posts = []
+        for fname in filenames[:20]:  # Limit to 20 most recent
+            filepath = f"{PAIGE_PROCESSED}/{fname}"
+            cmd2 = f"head -30 '{filepath}' 2>/dev/null"
+            _, stdout2, _ = client.exec_command(cmd2, timeout=10)
+            content = stdout2.read().decode("utf-8", errors="replace")
+            meta = _parse_frontmatter(content)
+
+            # Strip frontmatter for body preview
+            body = content
+            if body.startswith("---"):
+                end = body.find("---", 3)
+                if end != -1:
+                    body = body[end + 3:].strip()
+
+            posts.append({
+                "filename": fname,
+                "title": meta["title"] or fname.replace(".md", "").replace("-", " ").title(),
+                "date": meta["date"],
+                "body_preview": body[:300],
+            })
+
+        client.close()
+        return {"posts": posts}
+    except Exception:
+        return {"posts": []}
+
+
 @app.post("/api/paige/generate")
 async def paige_generate():
     try:

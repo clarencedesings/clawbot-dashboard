@@ -7,6 +7,8 @@ import {
   FileText,
   Sparkles,
   X,
+  ExternalLink,
+  Clipboard,
 } from 'lucide-react'
 
 export default function PaigePage() {
@@ -20,6 +22,8 @@ export default function PaigePage() {
   const [actionLoading, setActionLoading] = useState({})
   const [toast, setToast] = useState(null)
   const [confirmReject, setConfirmReject] = useState(null)
+  const [published, setPublished] = useState([])
+  const [copiedPin, setCopiedPin] = useState(null)
   const intervalRef = useRef(null)
   const genTimerRef = useRef(null)
 
@@ -27,10 +31,12 @@ export default function PaigePage() {
     Promise.all([
       fetch('/api/paige/status').then((r) => r.json()),
       fetch('/api/paige/staged').then((r) => r.json()),
+      fetch('/api/paige/processed').then((r) => r.json()),
     ])
-      .then(([statusData, stagedData]) => {
+      .then(([statusData, stagedData, processedData]) => {
         setStatus(statusData)
         setPosts(stagedData.posts || [])
+        setPublished(processedData.posts || [])
       })
       .catch(() => {})
       .finally(() => setLoading(false))
@@ -296,6 +302,79 @@ export default function PaigePage() {
                       {actionLoading[post.filename] === 'reject'
                         ? 'Rejecting...'
                         : 'Reject'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Published posts */}
+      <div className="mb-6">
+        <div className="flex items-center gap-3 mb-4">
+          <h3 className="text-lg font-semibold text-white">Published</h3>
+          {published.length > 0 && (
+            <span className="text-[10px] bg-green-500/15 text-green-400 px-2 py-0.5 rounded font-bold">
+              {published.length}
+            </span>
+          )}
+        </div>
+
+        {published.length === 0 ? (
+          <div className="bg-card rounded-xl border border-border p-12 text-center">
+            <CheckCircle size={32} className="text-text-dim mx-auto mb-3 opacity-50" />
+            <p className="text-text-dim text-sm italic">
+              {loading ? 'Loading...' : 'No published posts yet'}
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {published.map((post) => (
+              <div
+                key={post.filename}
+                className="bg-card rounded-xl border border-border p-5"
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0 flex-1">
+                    <h4 className="text-white font-semibold">{post.title}</h4>
+                    {post.date && (
+                      <span className="text-text-dim text-xs">{post.date}</span>
+                    )}
+                    {post.body_preview && (
+                      <p className="text-text-dim text-sm mt-2 leading-relaxed line-clamp-2">
+                        {post.body_preview}
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex gap-2 shrink-0">
+                    <a
+                      href="https://phyllisdiannestudio.com/blog"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-3 py-1.5 rounded-lg text-xs font-medium bg-sidebar border border-border text-text-dim hover:text-white transition-colors flex items-center gap-1.5"
+                    >
+                      <ExternalLink size={12} />
+                      View on Blog
+                    </a>
+                    <button
+                      onClick={() => {
+                        const text = `${post.title}\n\n${(post.body_preview || '').slice(0, 200).trim()}...\n\nhttps://phyllisdiannestudio.com/blog`
+                        navigator.clipboard.writeText(text).then(() => {
+                          setCopiedPin(post.filename)
+                          showToast('Copied for Pinterest!')
+                          setTimeout(() => setCopiedPin(null), 2000)
+                        })
+                      }}
+                      className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer flex items-center gap-1.5"
+                      style={{
+                        backgroundColor: copiedPin === post.filename ? '#22c55e' : '#d4948a',
+                        color: '#fff',
+                      }}
+                    >
+                      <Clipboard size={12} />
+                      {copiedPin === post.filename ? 'Copied!' : 'Copy for Pinterest'}
                     </button>
                   </div>
                 </div>
