@@ -1,8 +1,19 @@
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import BotCard from '../components/BotCard'
+
+const paigeBot = {
+  id: 'paige',
+  name: 'Paige',
+  role: 'Blog Writer',
+  status: 'online',
+  model: 'ollama/llama3.1:8b',
+  description: 'AI Blog Writer for Phyllis Dianne Studio',
+}
 
 export default function BotsPage() {
   const [bots, setBots] = useState([])
+  const navigate = useNavigate()
 
   useEffect(() => {
     fetch('/api/bots')
@@ -20,6 +31,39 @@ export default function BotsPage() {
         </p>
       </div>
       <div className="grid grid-cols-2 gap-4">
+        {/* Paige card */}
+        <div className="bg-card rounded-xl border border-border p-5 hover:border-accent/50 transition-colors">
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <span className="w-2.5 h-2.5 rounded-full bg-online" />
+              <h3 className="text-white font-semibold">{paigeBot.name}</h3>
+            </div>
+            <span className="text-xs px-2 py-1 rounded-full bg-accent/15 text-accent-hover capitalize">
+              {paigeBot.role}
+            </span>
+          </div>
+          <div className="space-y-2 text-sm">
+            <div className="flex justify-between">
+              <span className="text-text-dim">Status</span>
+              <span className="text-white capitalize">{paigeBot.status}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-text-dim">Model</span>
+              <span className="text-white">{paigeBot.model}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-text-dim">Description</span>
+              <span className="text-white">{paigeBot.description}</span>
+            </div>
+          </div>
+          <button
+            onClick={() => navigate('/paige')}
+            className="mt-4 w-full py-2 rounded-lg bg-accent/15 text-accent-hover text-sm font-medium hover:bg-accent/25 transition-colors"
+          >
+            Go to Paige
+          </button>
+        </div>
+
         {bots.map((bot) => (
           <BotCard key={bot.id} bot={bot} />
         ))}
