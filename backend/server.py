@@ -1641,9 +1641,13 @@ async def paige_approve(filename: str):
                 body = body[end + 3:].strip()
 
         # Clean body before posting to MongoDB
-        body = re.sub(r'^\*\*.*?\*\*\s*', '', body, flags=re.MULTILINE)
-        body = re.sub(r'^=+\s*', '', body, flags=re.MULTILINE)
-        body = re.sub(r'^-{3,}\s*', '', body, flags=re.MULTILINE)
+        # Strip **bold** markers but keep the text content
+        body = re.sub(r'\*\*(.+?)\*\*', r'\1', body)
+        # Remove ==== separator lines
+        body = re.sub(r'^=+\s*$', '', body, flags=re.MULTILINE)
+        # Remove --- separator lines (3+ dashes only, preserves - list items)
+        body = re.sub(r'^-{3,}\s*$', '', body, flags=re.MULTILINE)
+        # Remove [Image description:...] lines
         body = re.sub(r'^\[Image description:.*?\]\s*', '', body, flags=re.MULTILINE)
         body = body.strip()
 
@@ -1734,10 +1738,10 @@ async def paige_processed():
                 if end != -1:
                     body = body[end + 3:].strip()
 
-            # Clean markdown artifacts
-            body = re.sub(r'^\*\*.*?\*\*\s*', '', body, flags=re.MULTILINE)
-            body = re.sub(r'^=+\s*', '', body, flags=re.MULTILINE)
-            body = re.sub(r'^-{3,}\s*', '', body, flags=re.MULTILINE)
+            # Clean markdown artifacts (preserve headings and list items)
+            body = re.sub(r'\*\*(.+?)\*\*', r'\1', body)
+            body = re.sub(r'^=+\s*$', '', body, flags=re.MULTILINE)
+            body = re.sub(r'^-{3,}\s*$', '', body, flags=re.MULTILINE)
             body = re.sub(r'^\[Image description:.*?\]\s*', '', body, flags=re.MULTILINE)
             body = body.strip()
 
