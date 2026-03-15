@@ -8,6 +8,8 @@ import {
   Send,
   Save,
   RefreshCw,
+  Download,
+  FileText,
 } from 'lucide-react'
 
 export default function ApprovalPage() {
@@ -20,6 +22,8 @@ export default function ApprovalPage() {
   const [denyReason, setDenyReason] = useState('')
   const [approveModal, setApproveModal] = useState(null)
   const [expandedResponse, setExpandedResponse] = useState({})
+  const [savedResponses, setSavedResponses] = useState([])
+  const [expandedSaved, setExpandedSaved] = useState({})
   const intervalRef = useRef(null)
 
   const showToast = (message, type = 'success') => {
@@ -31,13 +35,15 @@ export default function ApprovalPage() {
     Promise.all([
       fetch('/api/tasks/pending').then((r) => r.json()),
       fetch('/api/tasks/queue-history').then((r) => r.json()),
+      fetch('/api/tasks/saved-responses').then((r) => r.json()),
     ])
-      .then(([pendingData, historyData]) => {
+      .then(([pendingData, historyData, savedData]) => {
         setPending(pendingData.tasks || [])
         setHistory({
           approved: historyData.approved || [],
           denied: historyData.denied || [],
         })
+        setSavedResponses(savedData.responses || [])
       })
       .catch(() => {})
       .finally(() => setLoading(false))
@@ -323,6 +329,69 @@ export default function ApprovalPage() {
                   ))}
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Saved Responses */}
+      {savedResponses.length > 0 && (
+        <div className="mb-8">
+          <div className="flex items-center gap-3 mb-4">
+            <h3 className="text-lg font-semibold text-white">Saved Responses</h3>
+            <span className="text-[10px] bg-accent/15 text-accent-hover px-2 py-0.5 rounded font-bold">
+              {savedResponses.length}
+            </span>
+          </div>
+          <div className="space-y-4">
+            {savedResponses.map((item) => (
+              <div
+                key={item.filename}
+                className="bg-card rounded-xl border border-border p-6"
+              >
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-3 mb-2">
+                      <span className="text-xs px-2 py-1 rounded-full bg-accent/15 text-accent-hover capitalize font-medium">
+                        {item.agent}
+                      </span>
+                      <span className="text-text-dim text-xs">
+                        {formatTime(item.approved_at || item.timestamp)}
+                      </span>
+                    </div>
+                    <div className="mb-3">
+                      <p className="text-text-dim text-xs uppercase tracking-wider mb-1">Task</p>
+                      <p className="text-white text-sm">{item.task}</p>
+                    </div>
+                    <div>
+                      <p className="text-text-dim text-xs uppercase tracking-wider mb-1">Response</p>
+                      <div className="bg-sidebar rounded-lg p-3 border border-border/50">
+                        <p className={`text-white text-sm leading-relaxed whitespace-pre-wrap ${
+                          !expandedSaved[item.filename] ? 'line-clamp-6' : ''
+                        }`}>
+                          {item.response}
+                        </p>
+                        {item.response && item.response.length > 300 && (
+                          <button
+                            onClick={() => setExpandedSaved((p) => ({ ...p, [item.filename]: !p[item.filename] }))}
+                            className="text-accent text-xs mt-2 hover:underline cursor-pointer"
+                          >
+                            {expandedSaved[item.filename] ? 'Show less' : 'Show full response'}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  <a
+                    href={`/api/tasks/saved-responses/${encodeURIComponent(item.filename)}`}
+                    download
+                    className="px-3 py-1.5 rounded-lg text-xs font-medium bg-accent/15 text-accent-hover hover:bg-accent/25 transition-colors cursor-pointer flex items-center gap-1.5 shrink-0"
+                  >
+                    <Download size={12} />
+                    Download
+                  </a>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       )}

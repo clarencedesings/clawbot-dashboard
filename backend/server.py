@@ -3,6 +3,7 @@ import re
 from pathlib import Path
 from pydantic import BaseModel
 from fastapi import FastAPI, Query
+from fastapi.responses import PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from datetime import datetime, timedelta, timezone
@@ -1470,11 +1471,16 @@ async def tasks_approve(filename: str, body: ApproveTaskBody = ApproveTaskBody()
             stdout.read()
             _send_telegram_phyllis(f"✅ Approved ({agent}): {original_task[:80]}")
         else:
-            # Save as text file
+            # Save as text file on CLAWBOT
             txt_filename = filename.replace(".json", ".txt")
             txt_content = f"Agent: {agent}\nTask: {original_task}\nTimestamp: {task.get('timestamp', '')}\nApproved: {task['approved_at']}\n\n--- Response ---\n{response or 'No response'}\n"
             with sftp.open(f"{AGENT_QUEUE_APPROVED}/{txt_filename}", "w") as f:
                 f.write(txt_content)
+
+            # Also save locally on Windows
+            local_dir = Path(r"C:\Users\clare\Documents\agent-responses")
+            local_dir.mkdir(parents=True, exist_ok=True)
+            (local_dir / txt_filename).write_text(txt_content, encoding="utf-8")
 
         # Move JSON to approved
         with sftp.open(f"{AGENT_QUEUE_APPROVED}/{filename}", "w") as f:
@@ -1612,6 +1618,57 @@ async def tasks_queue_history():
         return {"approved": approved, "denied": denied}
     except Exception:
         return {"approved": [], "denied": []}
+
+
+AGENT_RESPONSES_DIR = Path(r"C:\Users\clare\Documents\agent-responses")
+
+
+@app.get("/api/tasks/saved-responses")
+async def tasks_saved_responses():
+    if not AGENT_RESPONSES_DIR.exists():
+        return {"responses": []}
+    responses = []
+    for f in sorted(AGENT_RESPONSES_DIR.glob("*.txt"), key=lambda p: p.stat().st_mtime, reverse=True)[:20]:
+        content = f.read_text(encoding="utf-8", errors="replace")
+        # Parse the header fields
+        lines = content.split("\n")
+        meta = {}
+        for line in lines:
+            if line.startswith("Agent: "):
+                meta["agent"] = line[7:]
+            elif line.startswith("Task: "):
+                meta["task"] = line[6:]
+            elif line.startswith("Timestamp: "):
+                meta["timestamp"] = line[11:]
+            elif line.startswith("Approved: "):
+                meta["approved_at"] = line[10:]
+            elif line.startswith("--- Response ---"):
+                break
+        # Everything after "--- Response ---"
+        resp_start = content.find("--- Response ---")
+        response_text = content[resp_start + 16:].strip() if resp_start != -1 else content
+        responses.append({
+            "filename": f.name,
+            "agent": meta.get("agent", ""),
+            "task": meta.get("task", ""),
+            "timestamp": meta.get("timestamp", ""),
+            "approved_at": meta.get("approved_at", ""),
+            "response": response_text,
+        })
+    return {"responses": responses}
+
+
+@app.get("/api/tasks/saved-responses/{filename}")
+async def tasks_download_response(filename: str):
+    safe_name = Path(filename).name  # prevent path traversal
+    filepath = AGENT_RESPONSES_DIR / safe_name
+    if not filepath.exists():
+        return PlainTextResponse("File not found", status_code=404)
+    content = filepath.read_text(encoding="utf-8", errors="replace")
+    return PlainTextResponse(
+        content,
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}"'},
+    )
 
 
 @app.get("/api/tasks/scheduled")
