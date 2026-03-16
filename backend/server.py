@@ -1,4 +1,5 @@
 import hashlib
+import logging
 import re
 from pathlib import Path
 from pydantic import BaseModel
@@ -15,6 +16,8 @@ import paramiko
 import secrets
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Clawbot Dashboard API")
 
@@ -1236,7 +1239,8 @@ async def delete_memory(filename: str):
             return {"error": err}
         return {"status": "deleted", "filename": filename}
     except Exception as e:
-        return {"error": str(e)}
+        logger.error(f"Error: {e}")
+        return {"error": "An internal error occurred"}
 
 
 def _ssh_mongosh(eval_str: str) -> str:
@@ -1441,7 +1445,8 @@ def get_kofi_stats():
             "recent": recent
         }
     except Exception as e:
-        return {"error": str(e)}
+        logger.error(f"Error: {e}")
+        return {"error": "An internal error occurred"}
 
 
 @app.get("/api/store/summary")
@@ -1713,7 +1718,8 @@ async def tasks_send(body: SendCommandBody):
             "response": str(e),
         })
         _save_tasks_history(history[:50])
-        return {"success": False, "error": str(e), "sent_at": sent_at}
+        logger.error(f"Error: {e}")
+        return {"success": False, "error": "An internal error occurred", "sent_at": sent_at}
 
 
 @app.get("/api/tasks/history")
@@ -1757,7 +1763,8 @@ async def tasks_delete_pending(filename: str):
         client.close()
         return {"success": True}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        logger.error(f"Error: {e}")
+        return {"success": False, "error": "An internal error occurred"}
 
 
 @app.delete("/api/tasks/history/{filename:path}")
@@ -1785,7 +1792,8 @@ async def tasks_delete_history_entry(filename: str):
             local_txt.unlink()
         return {"success": True}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        logger.error(f"Error: {e}")
+        return {"success": False, "error": "An internal error occurred"}
 
 
 @app.delete("/api/tasks/saved-responses/{filename:path}")
@@ -1798,7 +1806,8 @@ async def tasks_delete_saved_response(filename: str):
         filepath.unlink()
         return {"success": True}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        logger.error(f"Error: {e}")
+        return {"success": False, "error": "An internal error occurred"}
 
 
 class ApproveTaskBody(BaseModel):
@@ -1869,7 +1878,8 @@ async def tasks_approve(filename: str, body: ApproveTaskBody = ApproveTaskBody()
         dest_label = "Telegram" if body.destination == "telegram" else "file"
         return {"success": True, "message": f"Approved and sent to {dest_label}: {agent}"}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        logger.error(f"Error: {e}")
+        return {"success": False, "error": "An internal error occurred"}
 
 
 @app.post("/api/tasks/deny/{filename:path}")
@@ -1945,7 +1955,8 @@ async def tasks_deny(filename: str, body: DenyTaskBody = DenyTaskBody()):
 
         return {"success": True, "message": f"Denied and re-sent to {agent} with feedback"}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        logger.error(f"Error: {e}")
+        return {"success": False, "error": "An internal error occurred"}
 
 
 @app.get("/api/tasks/queue-history")
@@ -2108,7 +2119,8 @@ async def tasks_schedule(body: ScheduleTaskBody):
         success = "error" not in (err or "").lower()
         return {"success": success, "response": out or err or None}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        logger.error(f"Error: {e}")
+        return {"success": False, "error": "An internal error occurred"}
 
 
 @app.delete("/api/tasks/scheduled/{task_id}")
@@ -2123,7 +2135,8 @@ async def tasks_delete_scheduled(task_id: str):
         client.close()
         return {"success": True, "response": out or err or None}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        logger.error(f"Error: {e}")
+        return {"success": False, "error": "An internal error occurred"}
 
 
 @app.get("/api/openclaw/config")
@@ -2282,7 +2295,8 @@ async def paige_staged_file(filename: str):
             "content": content,
         }
     except Exception as e:
-        return {"error": str(e)}
+        logger.error(f"Error: {e}")
+        return {"error": "An internal error occurred"}
 
 
 class EditStagedBody(BaseModel):
@@ -2322,7 +2336,8 @@ async def paige_staged_edit(filename: str, payload: EditStagedBody):
         client.close()
         return {"success": True, "message": "Post updated"}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        logger.error(f"Error: {e}")
+        return {"success": False, "error": "An internal error occurred"}
 
 
 @app.post("/api/paige/approve/{filename:path}")
@@ -2404,7 +2419,8 @@ async def paige_approve(filename: str, body: dict = None):
 
         return {"success": True, "message": f"Published: {title}"}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        logger.error(f"Error: {e}")
+        return {"success": False, "error": "An internal error occurred"}
 
 
 @app.post("/api/paige/reject/{filename:path}")
@@ -2430,7 +2446,8 @@ async def paige_reject(filename: str):
 
         return {"success": True, "message": f"Rejected: {title}"}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        logger.error(f"Error: {e}")
+        return {"success": False, "error": "An internal error occurred"}
 
 
 @app.get("/api/paige/processed")
@@ -2516,7 +2533,8 @@ async def paige_cron_log():
         status = "error" if has_error else "success"
         return {"lines": lines, "last_run": last_run, "status": status}
     except Exception as e:
-        return {"lines": [], "last_run": None, "status": "error", "error": str(e)}
+        logger.error(f"Error: {e}")
+        return {"lines": [], "last_run": None, "status": "error", "error": "An internal error occurred"}
 
 
 class ResendBody(BaseModel):
@@ -2555,7 +2573,8 @@ async def paige_resend(filename: str, body: ResendBody = ResendBody()):
 
         return {"success": True, "message": f"Paige is rewriting: {title}"}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        logger.error(f"Error: {e}")
+        return {"success": False, "error": "An internal error occurred"}
 
 
 @app.post("/api/paige/generate")
@@ -2567,7 +2586,8 @@ async def paige_generate():
         client.close()
         return {"success": True, "message": "Paige is writing a new post..."}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        logger.error(f"Error: {e}")
+        return {"success": False, "error": "An internal error occurred"}
 
 
 @app.delete("/api/paige/staged/{filename:path}")
@@ -2582,7 +2602,8 @@ async def paige_delete_staged(filename: str):
         _paige_status_cache["data"] = None
         return {"success": True, "message": f"Deleted draft: {filename}"}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        logger.error(f"Error: {e}")
+        return {"success": False, "error": "An internal error occurred"}
 
 
 @app.delete("/api/paige/processed/{filename:path}")
@@ -2619,7 +2640,8 @@ async def paige_delete_processed(filename: str):
         _paige_status_cache["data"] = None
         return {"success": True, "message": f"Deleted: {title or filename}"}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        logger.error(f"Error: {e}")
+        return {"success": False, "error": "An internal error occurred"}
 
 
 _system_cache = {"data": None, "timestamp": 0}
@@ -2720,7 +2742,8 @@ def get_system_stats():
         _system_cache["timestamp"] = now
         return result
     except Exception as e:
-        return {"error": str(e)}
+        logger.error(f"Error: {e}")
+        return {"error": "An internal error occurred"}
 
 
 @app.post("/api/system/clear-cache")
@@ -2762,7 +2785,8 @@ def run_system_action(body: dict):
         c.close()
         return {"output": out or err or "Done"}
     except Exception as e:
-        return {"error": str(e)}
+        logger.error(f"Error: {e}")
+        return {"error": "An internal error occurred"}
 
 
 @app.post("/api/paige/seo-preview")
@@ -2816,7 +2840,8 @@ Return only valid JSON, no markdown, no explanation.""",
         result = json.loads(text)
         return result
     except Exception as e:
-        return {"error": str(e)}
+        logger.error(f"Error: {e}")
+        return {"error": "An internal error occurred"}
 
 
 if __name__ == "__main__":
