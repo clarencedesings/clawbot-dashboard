@@ -1,3 +1,4 @@
+import bcrypt
 import hashlib
 import logging
 import re
@@ -19,6 +20,23 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
+def safe_path(base_dir: str, filename: str) -> str:
+    """Prevent path traversal by ensuring filename stays within base_dir."""
+    base = os.path.realpath(base_dir)
+    full = os.path.realpath(os.path.join(base, os.path.basename(filename)))
+    if not full.startswith(base):
+        raise ValueError(f"Path traversal detected: {filename}")
+    return full
+
+
+def _safe_remote_filename(filename: str) -> str:
+    """Sanitize a remote filename to prevent path traversal over SSH/SFTP."""
+    name = os.path.basename(filename)
+    if not name or name.startswith("."):
+        raise ValueError(f"Invalid filename: {filename}")
+    return name
+
+
 app = FastAPI(title="Clawbot Dashboard API")
 
 app.add_middleware(
@@ -30,14 +48,13 @@ app.add_middleware(
 )
 
 # Auth
-DASHBOARD_PASSWORD_HASH = "b15a5582fa189c6d4b5f39f0cd7ff2623e72d6170419786e0e14ba595b32759e"
+DASHBOARD_PASSWORD_HASH = b"$2b$12$weHzQA6/tGgQtdoTrkVVbuNoqEaSofB38ayHJLLxjtfWOxCtyshjm"
 VALID_TOKENS = set()
 
 @app.post("/api/auth/login")
 def auth_login(body: dict):
     password = body.get("password", "")
-    hashed = hashlib.sha256(password.encode()).hexdigest()
-    if hashed == DASHBOARD_PASSWORD_HASH:
+    if bcrypt.checkpw(password.encode(), DASHBOARD_PASSWORD_HASH):
         token = secrets.token_hex(32)
         VALID_TOKENS.add(token)
         return {"success": True, "token": token}
@@ -80,7 +97,12 @@ def _get_persistent_ssh():
             pass
     # Create new connection
     client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    client.set_missing_host_key_policy(paramiko.RejectPolicy())
+    client.load_system_host_keys()
+    try:
+        client.load_host_keys(os.path.expanduser('~/.ssh/known_hosts'))
+    except FileNotFoundError:
+        pass
     client.connect(CLAWBOT_HOST, port=CLAWBOT_PORT, username=CLAWBOT_USER, password=CLAWBOT_PASSWORD)
     client.get_transport().set_keepalive(30)
     _ssh_persistent["client"] = client
@@ -175,7 +197,12 @@ MOCK_BOTS = [
 def _ssh_connect():
     """Create and return a connected paramiko SSH client."""
     client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    client.set_missing_host_key_policy(paramiko.RejectPolicy())
+    client.load_system_host_keys()
+    try:
+        client.load_host_keys(os.path.expanduser('~/.ssh/known_hosts'))
+    except FileNotFoundError:
+        pass
     client.connect(
         hostname=CLAWBOT_HOST,
         port=CLAWBOT_PORT,
@@ -2278,7 +2305,7 @@ async def paige_staged():
 
 @app.get("/api/paige/staged/{filename:path}")
 async def paige_staged_file(filename: str):
-    safe = filename.replace("'", "'\\''")
+    safe = _safe_remote_filename(filename)
     try:
         client = _ssh_connect()
         cmd = f"cat '{PAIGE_STAGED}/{safe}'"
@@ -2306,7 +2333,7 @@ class EditStagedBody(BaseModel):
 
 @app.put("/api/paige/staged/{filename:path}")
 async def paige_staged_edit(filename: str, payload: EditStagedBody):
-    safe = filename.replace("'", "'\\''")
+    safe = _safe_remote_filename(filename)
     try:
         client = _ssh_connect()
         # Read existing file to preserve frontmatter
@@ -2329,7 +2356,7 @@ async def paige_staged_edit(filename: str, payload: EditStagedBody):
 
         # Write back via sftp
         sftp = client.open_sftp()
-        filepath = f"{PAIGE_STAGED}/{filename}"
+        filepath = f"{PAIGE_STAGED}/{safe}"
         with sftp.open(filepath, "w") as f:
             f.write(new_content)
         sftp.close()
@@ -2592,11 +2619,11 @@ async def paige_generate():
 
 @app.delete("/api/paige/staged/{filename:path}")
 async def paige_delete_staged(filename: str):
-    safe = filename.replace("'", "'\\''")
+    safe = _safe_remote_filename(filename)
     try:
         client = _ssh_connect()
         sftp = client.open_sftp()
-        sftp.remove(f"{PAIGE_STAGED}/{filename}")
+        sftp.remove(f"{PAIGE_STAGED}/{safe}")
         sftp.close()
         client.close()
         _paige_status_cache["data"] = None
@@ -2608,14 +2635,14 @@ async def paige_delete_staged(filename: str):
 
 @app.delete("/api/paige/processed/{filename:path}")
 async def paige_delete_processed(filename: str):
-    safe = filename.replace("'", "'\\''")
+    safe = _safe_remote_filename(filename)
     try:
         client = _ssh_connect()
         sftp = client.open_sftp()
 
         # Read the file to get the title for MongoDB deletion
         try:
-            with sftp.open(f"{PAIGE_PROCESSED}/{filename}", "r") as f:
+            with sftp.open(f"{PAIGE_PROCESSED}/{safe}", "r") as f:
                 content = f.read().decode("utf-8", errors="replace")
             meta = _parse_frontmatter(content)
             title = meta["title"]
@@ -2623,7 +2650,7 @@ async def paige_delete_processed(filename: str):
             title = None
 
         # Remove the file from processed/
-        sftp.remove(f"{PAIGE_PROCESSED}/{filename}")
+        sftp.remove(f"{PAIGE_PROCESSED}/{safe}")
         sftp.close()
 
         # Delete from MongoDB
@@ -2777,7 +2804,12 @@ def run_system_action(body: dict):
         return {"error": "Action not allowed"}
     try:
         c = paramiko.SSHClient()
-        c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        c.set_missing_host_key_policy(paramiko.RejectPolicy())
+        c.load_system_host_keys()
+        try:
+            c.load_host_keys(os.path.expanduser('~/.ssh/known_hosts'))
+        except FileNotFoundError:
+            pass
         c.connect(CLAWBOT_HOST, port=CLAWBOT_PORT, username=CLAWBOT_USER, password=CLAWBOT_PASSWORD)
         _, stdout, stderr = c.exec_command(ALLOWED_ACTIONS[action])
         out = stdout.read().decode().strip()
