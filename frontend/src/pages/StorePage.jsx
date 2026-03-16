@@ -46,11 +46,30 @@ export default function StorePage() {
   return (
     <div>
       {/* Header */}
-      <div className="mb-6">
-        <h2 className="text-2xl font-bold text-white">Phyllis Dianne Studio</h2>
-        <p className="text-text-dim text-sm mt-1">
-          Store analytics and recent orders
-        </p>
+      <div className="mb-6 flex items-start justify-between">
+        <div>
+          <h2 className="text-2xl font-bold text-white">Phyllis Dianne Studio</h2>
+          <p className="text-text-dim text-sm mt-1">
+            Store analytics and recent orders
+          </p>
+        </div>
+        <a
+          href="https://phyllisdiannestudio.com/admin"
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{
+            backgroundColor: '#7c3aed',
+            color: '#ffffff',
+            padding: '8px 16px',
+            borderRadius: 6,
+            fontSize: 12,
+            fontWeight: 600,
+            textDecoration: 'none',
+            display: 'inline-block'
+          }}
+        >
+          Manage Products →
+        </a>
       </div>
 
       {/* Stat cards */}
