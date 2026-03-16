@@ -1782,6 +1782,7 @@ async def tasks_pending():
 
 @app.delete("/api/tasks/pending/{filename:path}")
 async def tasks_delete_pending(filename: str):
+    filename = _safe_remote_filename(filename)
     try:
         client = _ssh_connect()
         sftp = client.open_sftp()
@@ -1796,17 +1797,18 @@ async def tasks_delete_pending(filename: str):
 
 @app.delete("/api/tasks/history/{filename:path}")
 async def tasks_delete_history_entry(filename: str):
+    filename = _safe_remote_filename(filename)
     try:
         client = _ssh_connect()
         sftp = client.open_sftp()
         # Try removing from approved and denied
+        txt_name = _safe_remote_filename(filename.replace(".json", ".txt"))
         for folder in (AGENT_QUEUE_APPROVED, AGENT_QUEUE_DENIED):
             try:
                 sftp.remove(f"{folder}/{filename}")
             except FileNotFoundError:
                 pass
             # Also remove .txt variant
-            txt_name = filename.replace(".json", ".txt")
             try:
                 sftp.remove(f"{folder}/{txt_name}")
             except FileNotFoundError:
@@ -1814,7 +1816,7 @@ async def tasks_delete_history_entry(filename: str):
         sftp.close()
         client.close()
         # Also remove local .txt if it exists
-        local_txt = AGENT_RESPONSES_DIR / filename.replace(".json", ".txt")
+        local_txt = AGENT_RESPONSES_DIR / txt_name
         if local_txt.exists():
             local_txt.unlink()
         return {"success": True}
@@ -1847,6 +1849,7 @@ class DenyTaskBody(BaseModel):
 
 @app.post("/api/tasks/approve/{filename:path}")
 async def tasks_approve(filename: str, body: ApproveTaskBody = ApproveTaskBody()):
+    filename = _safe_remote_filename(filename)
     try:
         client = _ssh_connect()
         sftp = client.open_sftp()
@@ -1877,7 +1880,7 @@ async def tasks_approve(filename: str, body: ApproveTaskBody = ApproveTaskBody()
             _send_telegram_phyllis(f"✅ Approved ({agent}): {original_task[:80]}")
         else:
             # Save as text file on CLAWBOT
-            txt_filename = filename.replace(".json", ".txt")
+            txt_filename = _safe_remote_filename(filename.replace(".json", ".txt"))
             txt_content = f"Agent: {agent}\nTask: {original_task}\nTimestamp: {task.get('timestamp', '')}\nApproved: {task['approved_at']}\n\n--- Response ---\n{response or 'No response'}\n"
             with sftp.open(f"{AGENT_QUEUE_APPROVED}/{txt_filename}", "w") as f:
                 f.write(txt_content)
@@ -1885,7 +1888,8 @@ async def tasks_approve(filename: str, body: ApproveTaskBody = ApproveTaskBody()
             # Also save locally on Windows
             local_dir = Path(r"C:\Users\clare\Documents\agent-responses")
             local_dir.mkdir(parents=True, exist_ok=True)
-            (local_dir / txt_filename).write_text(txt_content, encoding="utf-8")
+            safe_local = safe_path(str(local_dir), txt_filename)
+            Path(safe_local).write_text(txt_content, encoding="utf-8")
 
         # Move JSON to approved
         with sftp.open(f"{AGENT_QUEUE_APPROVED}/{filename}", "w") as f:
@@ -1911,6 +1915,7 @@ async def tasks_approve(filename: str, body: ApproveTaskBody = ApproveTaskBody()
 
 @app.post("/api/tasks/deny/{filename:path}")
 async def tasks_deny(filename: str, body: DenyTaskBody = DenyTaskBody()):
+    filename = _safe_remote_filename(filename)
     try:
         client = _ssh_connect()
         sftp = client.open_sftp()
@@ -2570,6 +2575,7 @@ class ResendBody(BaseModel):
 
 @app.post("/api/paige/resend/{filename:path}")
 async def paige_resend(filename: str, body: ResendBody = ResendBody()):
+    filename = _safe_remote_filename(filename)
     try:
         client = _ssh_connect()
         sftp = client.open_sftp()
