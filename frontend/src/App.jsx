@@ -1,5 +1,7 @@
+import { useState, useEffect } from 'react'
 import { Routes, Route } from 'react-router-dom'
 import Sidebar from './components/Sidebar'
+import LoginPage from './pages/LoginPage'
 import DashboardPage from './pages/DashboardPage'
 import SystemPage from './pages/SystemPage'
 import BotsPage from './pages/BotsPage'
@@ -16,9 +18,42 @@ import ApprovalPage from './pages/ApprovalPage'
 import SettingsPage from './pages/SettingsPage'
 
 export default function App() {
+  const [authed, setAuthed] = useState(false)
+  const [authChecked, setAuthChecked] = useState(false)
+
+  useEffect(() => {
+    const token = localStorage.getItem('clawbot_auth')
+    if (!token) { setAuthChecked(true); return }
+    fetch('/api/auth/verify', {
+      headers: { 'x-auth-token': token }
+    })
+      .then(r => r.json())
+      .then(d => {
+        if (d.valid) setAuthed(true)
+        setAuthChecked(true)
+      })
+      .catch(() => setAuthChecked(true))
+  }, [])
+
+  const handleLogin = () => setAuthed(true)
+
+  const handleLogout = () => {
+    const token = localStorage.getItem('clawbot_auth')
+    fetch('/api/auth/logout', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token })
+    })
+    localStorage.removeItem('clawbot_auth')
+    setAuthed(false)
+  }
+
+  if (!authChecked) return null
+  if (!authed) return <LoginPage onLogin={handleLogin} />
+
   return (
     <>
-      <Sidebar />
+      <Sidebar onLogout={handleLogout} />
       <main className="flex-1 p-4 pt-14 md:pt-8 md:p-8 overflow-auto">
         <Routes>
           <Route path="/" element={<DashboardPage />} />

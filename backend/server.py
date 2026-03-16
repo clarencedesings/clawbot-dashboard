@@ -2,7 +2,7 @@ import hashlib
 import re
 from pathlib import Path
 from pydantic import BaseModel
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, Request
 from fastapi.responses import PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
@@ -12,6 +12,7 @@ import uuid
 import os
 import time
 import paramiko
+import secrets
 
 load_dotenv()
 
@@ -24,6 +25,31 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Auth
+DASHBOARD_PASSWORD_HASH = "b15a5582fa189c6d4b5f39f0cd7ff2623e72d6170419786e0e14ba595b32759e"
+VALID_TOKENS = set()
+
+@app.post("/api/auth/login")
+def auth_login(body: dict):
+    password = body.get("password", "")
+    hashed = hashlib.sha256(password.encode()).hexdigest()
+    if hashed == DASHBOARD_PASSWORD_HASH:
+        token = secrets.token_hex(32)
+        VALID_TOKENS.add(token)
+        return {"success": True, "token": token}
+    return {"success": False}
+
+@app.post("/api/auth/logout")
+def auth_logout(body: dict):
+    token = body.get("token", "")
+    VALID_TOKENS.discard(token)
+    return {"success": True}
+
+@app.get("/api/auth/verify")
+def auth_verify(request: Request):
+    token = request.headers.get("x-auth-token", "")
+    return {"valid": token in VALID_TOKENS}
 
 # SSH config for Clawbot
 CLAWBOT_HOST = "192.168.0.130"

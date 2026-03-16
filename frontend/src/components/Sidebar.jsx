@@ -16,6 +16,7 @@ import {
   ShieldCheck,
   Menu,
   X,
+  LogOut,
 } from 'lucide-react'
 
 const NAV_ITEMS = [
@@ -34,7 +35,7 @@ const NAV_ITEMS = [
   { to: '/approvals', label: 'Approvals', icon: ShieldCheck, badgeKey: 'pending_tasks' },
 ]
 
-export default function Sidebar() {
+export default function Sidebar({ onLogout }) {
   const [serverOnline, setServerOnline] = useState(false)
   const [notifs, setNotifs] = useState({ pending_tasks: 0, pending_posts: 0, total: 0 })
   const [mobileOpen, setMobileOpen] = useState(false)
@@ -117,7 +118,7 @@ export default function Sidebar() {
           )
         })}
       </nav>
-      <div className="p-4 border-t border-border">
+      <div className="p-4 border-t border-border space-y-3">
         <div className="flex items-center gap-2">
           <span
             className={`w-2 h-2 rounded-full ${
@@ -128,6 +129,15 @@ export default function Sidebar() {
             Server: {serverOnline ? 'Online' : 'Offline'}
           </span>
         </div>
+        {onLogout && (
+          <button
+            onClick={onLogout}
+            className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs text-text-dim hover:bg-card hover:text-red-400 transition-colors cursor-pointer"
+          >
+            <LogOut size={14} />
+            <span>Logout</span>
+          </button>
+        )}
       </div>
     </>
   )
