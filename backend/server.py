@@ -1206,7 +1206,9 @@ async def delete_memory(filename: str):
 def _ssh_mongosh(eval_str: str) -> str:
     """Run a mongosh command on CLAWBOT via SSH and return stdout."""
     client = _ssh_connect()
-    cmd = f'mongosh coloring_store --quiet --eval {repr(eval_str)}'
+    # Use single quotes to prevent bash from expanding $ in mongosh queries
+    escaped = eval_str.replace("'", "'\\''")
+    cmd = f"mongosh coloring_store --quiet --eval '{escaped}'"
     _, stdout, stderr = client.exec_command(cmd, timeout=10)
     out = stdout.read().decode("utf-8", errors="replace").strip()
     client.close()
@@ -1259,7 +1261,11 @@ def _fetch_store_summary() -> dict:
         total_revenue = 0.0
         if total_rev_raw:
             try:
-                agg = json.loads(total_rev_raw)
+                clean = total_rev_raw.strip()
+                start = clean.find('[')
+                if start >= 0:
+                    clean = clean[start:]
+                agg = json.loads(clean)
                 if agg:
                     total_revenue = float(agg[0].get("t", 0)) / 100.0
             except (json.JSONDecodeError, IndexError, TypeError):
@@ -1272,7 +1278,11 @@ def _fetch_store_summary() -> dict:
         revenue_today = 0.0
         if rev_today_raw:
             try:
-                agg = json.loads(rev_today_raw)
+                clean = rev_today_raw.strip()
+                start = clean.find('[')
+                if start >= 0:
+                    clean = clean[start:]
+                agg = json.loads(clean)
                 if agg:
                     revenue_today = float(agg[0].get("t", 0)) / 100.0
             except (json.JSONDecodeError, IndexError, TypeError):
@@ -1352,6 +1362,50 @@ def _fetch_recent_orders() -> list[dict]:
         return result
     except Exception:
         return _store_orders_cache["data"] or []
+
+
+@app.get("/api/kofi/stats")
+def get_kofi_stats():
+    try:
+        total_raw = _ssh_mongosh(
+            "JSON.stringify(db.kofi_transactions.aggregate([{$group:{_id:null,total:{$sum:'$amount'},count:{$sum:1}}}]).toArray())"
+        )
+        total_revenue = 0.0
+        total_orders = 0
+        if total_raw:
+            try:
+                clean = total_raw.strip()
+                start = clean.find('[')
+                if start >= 0:
+                    clean = clean[start:]
+                agg = json.loads(clean)
+                if agg:
+                    total_revenue = float(agg[0].get("total", 0))
+                    total_orders = int(agg[0].get("count", 0))
+            except Exception:
+                pass
+
+        recent_raw = _ssh_mongosh(
+            "JSON.stringify(db.kofi_transactions.find({},{amount:1,type:1,email:1,timestamp:1,shop_items:1,_id:0}).sort({received_at:-1}).limit(10).toArray())"
+        )
+        recent = []
+        if recent_raw:
+            try:
+                clean = recent_raw.strip()
+                start = clean.find('[')
+                if start >= 0:
+                    clean = clean[start:]
+                recent = json.loads(clean)
+            except Exception:
+                pass
+
+        return {
+            "total_revenue": round(total_revenue, 2),
+            "total_orders": total_orders,
+            "recent": recent
+        }
+    except Exception as e:
+        return {"error": str(e)}
 
 
 @app.get("/api/store/summary")

@@ -20,6 +20,7 @@ export default function KofiPage() {
   const [queue, setQueue] = useState([])
   const [processed, setProcessed] = useState([])
   const [loading, setLoading] = useState(false)
+  const [kofiStats, setKofiStats] = useState(null)
   const intervalRef = useRef(null)
 
   const fetchData = useCallback(() => {
@@ -44,6 +45,13 @@ export default function KofiPage() {
     return () => clearInterval(intervalRef.current)
   }, [fetchData])
 
+  useEffect(() => {
+    fetch('/api/kofi/stats')
+      .then(r => r.json())
+      .then(d => setKofiStats(d))
+      .catch(() => {})
+  }, [])
+
   const pipelineStatus = summary?.pipeline_status || 'unknown'
 
   return (
@@ -55,6 +63,47 @@ export default function KofiPage() {
           File upload pipeline status and history
         </p>
       </div>
+
+      {/* Ko-fi Revenue & Orders */}
+      {kofiStats && !kofiStats.error && (
+        <div className="grid grid-cols-2 gap-4 mb-6">
+          <div className="bg-card rounded-xl border border-border p-5">
+            <p className="text-text-dim text-xs uppercase tracking-wider mb-2">Ko-fi Revenue</p>
+            <p className="text-2xl font-bold text-green-400">${kofiStats.total_revenue.toFixed(2)}</p>
+          </div>
+          <div className="bg-card rounded-xl border border-border p-5">
+            <p className="text-text-dim text-xs uppercase tracking-wider mb-2">Total Orders</p>
+            <p className="text-2xl font-bold text-white">{kofiStats.total_orders}</p>
+          </div>
+        </div>
+      )}
+
+      {/* Recent Ko-fi Orders */}
+      {kofiStats?.recent?.length > 0 && (
+        <div className="bg-card rounded-xl border border-border overflow-hidden mb-8">
+          <div className="px-6 py-4 border-b border-border">
+            <h3 className="text-white font-semibold text-sm">Recent Ko-fi Orders</h3>
+          </div>
+          <table className="w-full text-sm">
+            <thead className="bg-sidebar">
+              <tr className="text-text-dim text-left text-xs">
+                <th className="px-6 py-2.5">Date</th>
+                <th className="px-6 py-2.5">Type</th>
+                <th className="px-6 py-2.5">Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {kofiStats.recent.map((t, i) => (
+                <tr key={i} className="border-t border-border/50 hover:bg-sidebar/50">
+                  <td className="px-6 py-2.5 text-text-dim">{t.timestamp ? new Date(t.timestamp).toLocaleDateString() : '—'}</td>
+                  <td className="px-6 py-2.5 text-white">{t.type || '—'}</td>
+                  <td className="px-6 py-2.5 text-green-400 font-semibold">${parseFloat(t.amount || 0).toFixed(2)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       {/* Stats bar */}
       <div className="grid grid-cols-4 gap-4 mb-8">
