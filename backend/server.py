@@ -183,6 +183,15 @@ def _ssh_connect():
     return client
 
 
+def _openclaw_log_path() -> str:
+    """Get today's openclaw log file path."""
+    log_dir = os.getenv("OPENCLAW_LOG", "/tmp/openclaw/")
+    if log_dir.endswith("/"):
+        today = datetime.now().strftime("%Y-%m-%d")
+        return f"{log_dir}openclaw-{today}.log"
+    return log_dir
+
+
 def _parse_systemd_timestamp(raw: str) -> datetime | None:
     """Parse systemd ActiveEnterTimestamp like 'Thu 2026-03-11 02:14:33 UTC'."""
     # Format: ActiveEnterTimestamp=Thu 2026-03-11 02:14:33 UTC
@@ -269,9 +278,9 @@ def ssh_check_services() -> dict:
         ol_ts = _parse_systemd_timestamp(stdout_ol_ts.read().decode("utf-8"))
         ollama_uptime = _format_uptime(ol_ts) if ollama_online else "—"
 
-        # Last active: read last line of most recent openclaw log
+        # Last active: read last line of today's openclaw log
         _, stdout_log, _ = client.exec_command(
-            "ls -t /tmp/openclaw/openclaw-*.log 2>/dev/null | head -1 | xargs -r tail -1"
+            f"tail -1 {_openclaw_log_path()} 2>/dev/null"
         )
         last_log_line = stdout_log.read().decode("utf-8").strip()
         last_active = "—"
@@ -722,7 +731,7 @@ def ssh_read_logs() -> list[dict]:
     try:
         client = _ssh_connect()
         _, stdout, _ = client.exec_command(
-            "ls -t /tmp/openclaw/openclaw-*.log 2>/dev/null | head -1 | xargs -r tail -200"
+            f"tail -200 {_openclaw_log_path()} 2>/dev/null"
         )
         raw = stdout.read().decode("utf-8", errors="replace")
         client.close()
@@ -839,7 +848,7 @@ def ssh_read_alerts() -> list[dict]:
     try:
         client = _ssh_connect()
         _, stdout, _ = client.exec_command(
-            "ls -t /tmp/openclaw/openclaw-*.log 2>/dev/null | head -1 | xargs -r cat"
+            f"cat {_openclaw_log_path()} 2>/dev/null"
         )
         raw = stdout.read().decode("utf-8", errors="replace")
         client.close()
@@ -941,7 +950,7 @@ def ssh_read_token_usage() -> dict:
 
     try:
         client = _ssh_connect()
-        # Read ALL log files
+        # Read ALL log files for token usage history
         _, stdout, _ = client.exec_command(
             "cat /tmp/openclaw/openclaw-*.log 2>/dev/null"
         )
