@@ -29,6 +29,38 @@ export default function TasksPage() {
   const [cronMsg, setCronMsg] = useState('')
   const [scheduling, setScheduling] = useState(false)
   const [confirmDeleteHistory, setConfirmDeleteHistory] = useState(null)
+  const [templates, setTemplates] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('task_templates'))
+      if (saved) return saved
+    } catch {}
+    return {
+      jarvis: [
+        "What's the latest on Earthlie Designs?",
+        'Summarize my 3D printing business tasks today',
+        'What should I focus on for Earthlie Designs this week?',
+      ],
+      business: [
+        'Give me 5 marketing ideas for Earthlie Designs',
+        'How can I grow sales at Pizza Ranch FunZone locations?',
+        'Suggest new 3D printed products I could add to Earthlie Designs',
+      ],
+      research: [
+        'Research trending 3D printed fidget toys in 2026',
+        'Find top keywords for articulating dragon 3D prints',
+        'Research competitors selling 3D printed figures in arcade locations',
+      ],
+      coder: [
+        'Write a Python script to track Earthlie Designs inventory',
+        'Build a simple order tracking spreadsheet for 3D print orders',
+        'Write a script to automate my Pizza Ranch outreach emails',
+      ],
+    }
+  })
+  const [notes, setNotes] = useState(() => localStorage.getItem('jarvis_notes') || '')
+  const [newTemplate, setNewTemplate] = useState('')
+  const [addingTo, setAddingTo] = useState(null)
+  const [notesOpen, setNotesOpen] = useState(false)
   const intervalRef = useRef(null)
 
   const fetchHistory = useCallback(() => {
@@ -107,6 +139,40 @@ export default function TasksPage() {
     }
   }
 
+  const saveTemplates = (updated) => {
+    setTemplates(updated)
+    localStorage.setItem('task_templates', JSON.stringify(updated))
+  }
+
+  const saveNotes = (val) => {
+    setNotes(val)
+    localStorage.setItem('jarvis_notes', val)
+  }
+
+  const deleteTemplate = (agentKey, index) => {
+    const updated = {
+      ...templates,
+      [agentKey]: templates[agentKey].filter((_, i) => i !== index),
+    }
+    saveTemplates(updated)
+  }
+
+  const addTemplate = (agentKey) => {
+    if (!newTemplate.trim()) return
+    const updated = {
+      ...templates,
+      [agentKey]: [...(templates[agentKey] || []), newTemplate.trim()],
+    }
+    saveTemplates(updated)
+    setNewTemplate('')
+    setAddingTo(null)
+  }
+
+  const useTemplate = (text, agentKey) => {
+    setMessage(text)
+    setAgent(agentKey === 'jarvis' ? 'main' : agentKey)
+  }
+
   return (
     <div>
       {/* Header */}
@@ -154,6 +220,92 @@ export default function TasksPage() {
           </button>
           <span className="text-text-dim text-xs ml-auto">Ctrl+Enter to send</span>
         </div>
+      </div>
+
+      {/* Task Templates */}
+      <div className="bg-card rounded-xl border border-border p-6 mb-8">
+        <h3 className="text-white font-semibold mb-4">Task Templates</h3>
+        {['jarvis', 'business', 'research', 'coder'].map((agentKey) => (
+          <div key={agentKey} className="mb-4 last:mb-0">
+            <p className="text-text-dim text-[11px] font-bold uppercase tracking-wider mb-2">
+              {agentKey === 'jarvis'
+                ? 'Jarvis (Main)'
+                : agentKey.charAt(0).toUpperCase() + agentKey.slice(1)}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {(templates[agentKey] || []).map((t, i) => (
+                <div key={i} className="flex items-center gap-1">
+                  <button
+                    onClick={() => useTemplate(t, agentKey)}
+                    className="bg-sidebar border border-border text-white rounded-lg px-3 py-1.5 text-xs hover:border-accent transition-colors cursor-pointer text-left"
+                  >
+                    {t}
+                  </button>
+                  <button
+                    onClick={() => deleteTemplate(agentKey, i)}
+                    className="text-text-dim hover:text-red-400 transition-colors cursor-pointer text-sm px-0.5"
+                  >
+                    &times;
+                  </button>
+                </div>
+              ))}
+              {addingTo === agentKey ? (
+                <div className="flex gap-2">
+                  <input
+                    autoFocus
+                    value={newTemplate}
+                    onChange={(e) => setNewTemplate(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') addTemplate(agentKey)
+                      if (e.key === 'Escape') setAddingTo(null)
+                    }}
+                    placeholder="New template..."
+                    className="bg-sidebar border border-border text-white rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-accent w-60"
+                  />
+                  <button
+                    onClick={() => addTemplate(agentKey)}
+                    className="bg-green-600 hover:bg-green-500 text-white rounded-lg px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer"
+                  >
+                    Add
+                  </button>
+                  <button
+                    onClick={() => setAddingTo(null)}
+                    className="bg-sidebar border border-border text-text-dim rounded-lg px-3 py-1.5 text-xs transition-colors cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setAddingTo(agentKey)}
+                  className="border border-dashed border-border text-text-dim rounded-lg px-3 py-1.5 text-xs hover:border-accent hover:text-white transition-colors cursor-pointer"
+                >
+                  + Add
+                </button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Quick Notes */}
+      <div className="bg-card rounded-xl border border-border p-6 mb-8">
+        <button
+          onClick={() => setNotesOpen((p) => !p)}
+          className="text-white font-semibold text-sm flex items-center gap-2 cursor-pointer bg-transparent border-none p-0"
+        >
+          Quick Notes {notesOpen ? '\u25b2' : '\u25bc'}
+        </button>
+        {notesOpen && (
+          <textarea
+            value={notes}
+            onChange={(e) => saveNotes(e.target.value)}
+            placeholder="Jot down anything Jarvis should know, reminders, context..."
+            rows={6}
+            className="mt-3 w-full bg-sidebar border border-border rounded-lg px-4 py-3 text-white text-sm placeholder-text-dim resize-y focus:outline-none focus:border-accent"
+            style={{ boxSizing: 'border-box' }}
+          />
+        )}
       </div>
 
       {/* Recent Commands History */}

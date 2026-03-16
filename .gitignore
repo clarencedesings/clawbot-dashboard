@@ -6,3 +6,4 @@ __pycache__/
 .venv/
 dismissed_alerts.json
 tasks_history.json
+.claude/

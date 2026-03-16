@@ -1,6 +1,7 @@
 import { Routes, Route } from 'react-router-dom'
 import Sidebar from './components/Sidebar'
 import DashboardPage from './pages/DashboardPage'
+import SystemPage from './pages/SystemPage'
 import BotsPage from './pages/BotsPage'
 import GatewayPage from './pages/GatewayPage'
 import TasksPage from './pages/TasksPage'
@@ -21,6 +22,7 @@ export default function App() {
       <main className="flex-1 p-4 pt-14 md:pt-8 md:p-8 overflow-auto">
         <Routes>
           <Route path="/" element={<DashboardPage />} />
+          <Route path="/system" element={<SystemPage />} />
           <Route path="/bots" element={<BotsPage />} />
           <Route path="/gateway" element={<GatewayPage />} />
           <Route path="/tasks" element={<TasksPage />} />

@@ -38,6 +38,11 @@ export default function PaigePage() {
   const [editTitle, setEditTitle] = useState('')
   const [editBody, setEditBody] = useState('')
   const [editLoading, setEditLoading] = useState(false)
+  const [scheduledDates, setScheduledDates] = useState({})
+  const [postCategories, setPostCategories] = useState({})
+  const [postTags, setPostTags] = useState({})
+  const [seoResults, setSeoResults] = useState({})
+  const [seoLoading, setSeoLoading] = useState({})
   const intervalRef = useRef(null)
   const genTimerRef = useRef(null)
 
@@ -112,7 +117,15 @@ export default function PaigePage() {
 
   const handleApprove = (filename) => {
     setActionLoading((p) => ({ ...p, [filename]: 'approve' }))
-    fetch(`/api/paige/approve/${encodeURIComponent(filename)}`, { method: 'POST' })
+    fetch(`/api/paige/approve/${encodeURIComponent(filename)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        scheduled_date: scheduledDates[filename] || '',
+        category: postCategories[filename] || '',
+        tags: (postTags[filename] || '').split(',').map((t) => t.trim()).filter(Boolean),
+      }),
+    })
       .then((r) => r.json())
       .then((d) => {
         if (d.success) {
@@ -219,6 +232,38 @@ export default function PaigePage() {
       })
       .catch(() => showToast('Failed to reach server', 'error'))
       .finally(() => setEditLoading(false))
+  }
+
+  const handleSeoPreview = async (post) => {
+    setSeoLoading((prev) => ({ ...prev, [post.filename]: true }))
+    setSeoResults((prev) => ({ ...prev, [post.filename]: null }))
+    try {
+      // First fetch full content
+      const contentRes = await fetch(
+        `/api/paige/staged/${encodeURIComponent(post.filename)}`,
+      )
+      const contentData = await contentRes.json()
+      let fullBody = contentData.body || contentData.content || post.preview || ''
+      // Strip frontmatter if present
+      if (fullBody.startsWith('---')) {
+        const end = fullBody.indexOf('---', 3)
+        if (end !== -1) fullBody = fullBody.slice(end + 3).trim()
+      }
+
+      const res = await fetch('/api/paige/seo-preview', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: post.title, content: fullBody }),
+      })
+      const data = await res.json()
+      setSeoResults((prev) => ({ ...prev, [post.filename]: data }))
+    } catch {
+      setSeoResults((prev) => ({
+        ...prev,
+        [post.filename]: { error: 'Request failed' },
+      }))
+    }
+    setSeoLoading((prev) => ({ ...prev, [post.filename]: false }))
   }
 
   const renderMarkdown = (content) => {
@@ -379,8 +424,70 @@ export default function PaigePage() {
                       {post.preview?.slice(0, 300)}
                       {post.preview?.length > 300 ? '...' : ''}
                     </p>
+                    {seoResults[post.filename] && !seoResults[post.filename].error && (
+                      <div className="bg-sidebar rounded-lg border border-border p-4 mt-3">
+                        <div className="flex items-center gap-3 mb-3">
+                          <span
+                            className="text-2xl font-bold"
+                            style={{
+                              color:
+                                seoResults[post.filename].score >= 80
+                                  ? '#22c55e'
+                                  : seoResults[post.filename].score >= 60
+                                    ? '#f59e0b'
+                                    : '#ef4444',
+                            }}
+                          >
+                            {seoResults[post.filename].score}/100
+                          </span>
+                          <span
+                            className="text-lg font-bold px-2.5 py-0.5 rounded"
+                            style={{
+                              backgroundColor:
+                                seoResults[post.filename].score >= 80
+                                  ? '#22c55e22'
+                                  : seoResults[post.filename].score >= 60
+                                    ? '#f59e0b22'
+                                    : '#ef444422',
+                              color:
+                                seoResults[post.filename].score >= 80
+                                  ? '#22c55e'
+                                  : seoResults[post.filename].score >= 60
+                                    ? '#f59e0b'
+                                    : '#ef4444',
+                            }}
+                          >
+                            {seoResults[post.filename].grade}
+                          </span>
+                          <span className="text-text-dim text-xs">
+                            {seoResults[post.filename].summary}
+                          </span>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                          {(seoResults[post.filename].checks || []).map((check, i) => (
+                            <div
+                              key={i}
+                              className="flex items-start gap-2 text-[11px]"
+                            >
+                              <span>{check.passed ? '\u2705' : '\u274c'}</span>
+                              <div>
+                                <span className="text-white font-semibold">
+                                  {check.label}:{' '}
+                                </span>
+                                <span className="text-text-dim">{check.note}</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {seoResults[post.filename]?.error && (
+                      <p className="text-red-400 text-xs mt-2">
+                        SEO Error: {seoResults[post.filename].error}
+                      </p>
+                    )}
                   </div>
-                  <div className="flex flex-wrap gap-2 shrink-0">
+                  <div className="flex flex-wrap gap-2 shrink-0 items-end">
                     <button
                       onClick={() => handlePreview(post.filename)}
                       className="px-3 py-1.5 rounded-lg text-xs font-medium bg-sidebar border border-border text-text-dim hover:text-white transition-colors cursor-pointer"
@@ -394,6 +501,42 @@ export default function PaigePage() {
                       <Edit3 size={12} />
                       Edit
                     </button>
+                    <button
+                      onClick={() => handleSeoPreview(post)}
+                      disabled={seoLoading[post.filename]}
+                      className="px-3 py-1.5 rounded-lg text-xs font-medium bg-sidebar border border-border text-text-dim hover:text-white transition-colors cursor-pointer disabled:opacity-50"
+                    >
+                      {seoLoading[post.filename] ? 'Analyzing...' : 'SEO'}
+                    </button>
+                    <div>
+                      <label className="text-text-dim text-[11px] block mb-1">Publish Date</label>
+                      <input
+                        type="date"
+                        value={scheduledDates[post.filename] || new Date().toISOString().split('T')[0]}
+                        onChange={(e) => setScheduledDates((prev) => ({ ...prev, [post.filename]: e.target.value }))}
+                        className="bg-sidebar border border-border text-white rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-accent"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-text-dim text-[11px] block mb-1">Category</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Easter, Kawaii"
+                        value={postCategories[post.filename] || ''}
+                        onChange={(e) => setPostCategories((prev) => ({ ...prev, [post.filename]: e.target.value }))}
+                        className="bg-sidebar border border-border text-white rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-accent w-32"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-text-dim text-[11px] block mb-1">Tags</label>
+                      <input
+                        type="text"
+                        placeholder="tag1, tag2"
+                        value={postTags[post.filename] || ''}
+                        onChange={(e) => setPostTags((prev) => ({ ...prev, [post.filename]: e.target.value }))}
+                        className="bg-sidebar border border-border text-white rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-accent w-40"
+                      />
+                    </div>
                     <button
                       onClick={() => handleApprove(post.filename)}
                       disabled={!!actionLoading[post.filename]}

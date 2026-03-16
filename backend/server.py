@@ -2213,8 +2213,11 @@ async def paige_staged_edit(filename: str, payload: EditStagedBody):
 
 
 @app.post("/api/paige/approve/{filename:path}")
-async def paige_approve(filename: str):
+async def paige_approve(filename: str, body: dict = None):
     safe = filename.replace("'", "'\\''")
+    scheduled_date = (body or {}).get("scheduled_date", "")
+    req_category = (body or {}).get("category", "")
+    req_tags = (body or {}).get("tags", [])
     try:
         client = _ssh_connect()
 
@@ -2252,7 +2255,13 @@ async def paige_approve(filename: str):
         try:
             requests.post(
                 "http://192.168.0.130:8001/api/admin/blog",
-                json={"title": title, "body": body},
+                json={
+                    "title": title,
+                    "body": body,
+                    "date_published": scheduled_date or meta.get("date", ""),
+                    "category": req_category or meta.get("category", ""),
+                    "tags": req_tags or [t.strip() for t in meta.get("tags", "").strip("[]").split(",") if t.strip()],
+                },
                 headers={"x-admin-token": "phyllis-admin-token-2024"},
                 timeout=10,
             )
@@ -2498,6 +2507,164 @@ async def paige_delete_processed(filename: str):
         return {"success": True, "message": f"Deleted: {title or filename}"}
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+
+_system_cache = {"data": None, "timestamp": 0}
+SYSTEM_CACHE_TTL = 10  # seconds
+
+
+@app.get("/api/system")
+def get_system_stats():
+    now = time.time()
+    if _system_cache["data"] and now - _system_cache["timestamp"] < SYSTEM_CACHE_TTL:
+        return _system_cache["data"]
+
+    try:
+        c = paramiko.SSHClient()
+        c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        c.connect(CLAWBOT_HOST, port=CLAWBOT_PORT, username=CLAWBOT_USER, password=CLAWBOT_PASSWORD)
+
+        def run(cmd):
+            _, stdout, _ = c.exec_command(cmd)
+            return stdout.read().decode().strip()
+
+        cpu = run("top -bn1 | grep 'Cpu(s)' | awk '{print $2+$4}'")
+
+        ram_raw = run("free -m | awk 'NR==2{print $2, $3, $4}'")
+        ram_parts = ram_raw.split()
+        ram_total, ram_used, ram_free = ram_parts[0], ram_parts[1], ram_parts[2]
+
+        disk_raw = run("df -h / | awk 'NR==2{print $2, $3, $4, $5}'")
+        disk_parts = disk_raw.split()
+        disk_total, disk_used, disk_free, disk_pct = disk_parts[0], disk_parts[1], disk_parts[2], disk_parts[3]
+
+        gpu_raw = run("/usr/lib/wsl/lib/nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu --format=csv,noheader,nounits 2>/dev/null || echo 'unavailable'")
+        if gpu_raw == "unavailable" or not gpu_raw:
+            gpu = None
+        else:
+            gparts = [x.strip() for x in gpu_raw.split(",")]
+            gpu = {"name": gparts[0], "utilization": gparts[1], "mem_used": gparts[2], "mem_total": gparts[3], "temperature": gparts[4]}
+
+        procs_raw = run("ps aux --sort=-%cpu | awk 'NR>1 && NR<=6{print $1, $3, $4, $11}'")
+        procs = []
+        for line in procs_raw.splitlines():
+            parts = line.split(None, 3)
+            if len(parts) == 4:
+                procs.append({"user": parts[0], "cpu": parts[1], "mem": parts[2], "cmd": parts[3]})
+
+        services = ["phyllis-backend.service", "phyllis-frontend.service", "paige-webhook.service", "cloudflared.service", "ollama.service", "mongod.service", "ssh.service"]
+        svc_status = {}
+        for svc in services:
+            status = run(f"systemctl is-active {svc} 2>/dev/null || echo inactive").splitlines()[0].strip()
+            svc_status[svc] = status
+
+        # openclaw-gateway runs as a user service
+        svc_status["openclaw-gateway.service"] = run("systemctl --user is-active openclaw-gateway.service 2>/dev/null || echo inactive").splitlines()[0].strip()
+
+        c.close()
+
+        result = {
+            "cpu_percent": cpu,
+            "ram": {"total_mb": ram_total, "used_mb": ram_used, "free_mb": ram_free},
+            "disk": {"total": disk_total, "used": disk_used, "free": disk_free, "percent": disk_pct},
+            "gpu": gpu,
+            "top_processes": procs,
+            "services": svc_status,
+        }
+        _system_cache["data"] = result
+        _system_cache["timestamp"] = now
+        return result
+    except Exception as e:
+        return {"error": str(e)}
+
+
+ALLOWED_ACTIONS = {
+    "restart_phyllis_backend": "echo one | sudo -S systemctl restart phyllis-backend.service 2>&1 && echo 'Done'",
+    "restart_phyllis_frontend": "echo one | sudo -S systemctl restart phyllis-frontend.service 2>&1 && echo 'Done'",
+    "restart_paige_webhook": "echo one | sudo -S systemctl restart paige-webhook.service 2>&1 && echo 'Done'",
+    "restart_openclaw": "systemctl --user restart openclaw-gateway.service && echo 'Done'",
+    "restart_ollama": "echo one | sudo -S systemctl restart ollama.service 2>&1 && echo 'Done'",
+    "restart_mongodb": "echo one | sudo -S systemctl restart mongod.service 2>&1 && echo 'Done'",
+    "restart_cloudflared": "echo one | sudo -S systemctl restart cloudflared.service 2>&1 && echo 'Done'",
+    "restart_openclaw_gateway": "systemctl --user restart openclaw-gateway.service && echo 'Done'",
+    "check_disk": "df -h /",
+    "clear_paige_staged": "rm -f /home/clarence/paige/staged/*.json && echo 'Staged cleared'",
+    "git_pull_phyllis": "cd /home/clarence/PhyllisDiAnneStudio-App && git pull 2>&1",
+    "check_gpu": "/usr/lib/wsl/lib/nvidia-smi 2>/dev/null || echo 'GPU unavailable'",
+    "list_ollama_models": "ollama list 2>/dev/null || echo 'Ollama not running'",
+}
+
+
+@app.post("/api/system/action")
+def run_system_action(body: dict):
+    action = body.get("action")
+    if action not in ALLOWED_ACTIONS:
+        return {"error": "Action not allowed"}
+    try:
+        c = paramiko.SSHClient()
+        c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        c.connect(CLAWBOT_HOST, port=CLAWBOT_PORT, username=CLAWBOT_USER, password=CLAWBOT_PASSWORD)
+        _, stdout, stderr = c.exec_command(ALLOWED_ACTIONS[action])
+        out = stdout.read().decode().strip()
+        err = stderr.read().decode().strip()
+        c.close()
+        return {"output": out or err or "Done"}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.post("/api/paige/seo-preview")
+async def seo_preview(body: dict):
+    import anthropic
+
+    content = body.get("content", "")
+    title = body.get("title", "")
+    if not content:
+        return {"error": "No content provided"}
+    try:
+        client = anthropic.Anthropic()
+        message = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=1000,
+            messages=[
+                {
+                    "role": "user",
+                    "content": f"""Analyze this blog post for SEO quality. Be concise and specific.
+
+Title: {title}
+
+Content:
+{content[:3000]}
+
+Return a JSON object with exactly this structure:
+{{
+  "score": <number 0-100>,
+  "grade": "<A/B/C/D/F>",
+  "summary": "<one sentence overall assessment>",
+  "checks": [
+    {{"label": "<check name>", "passed": <true/false>, "note": "<specific feedback>"}}
+  ]
+}}
+
+Check these specific things:
+1. Title length (50-60 chars is ideal)
+2. Word count (700+ words is good)
+3. Has H2/H3 headings
+4. Has a clear call to action
+5. Keyword not stuffed (natural repetition)
+6. Readable tone (warm, not robotic)
+7. Has specific/concrete details (not vague)
+8. Opening hook (first sentence grabs attention)
+
+Return only valid JSON, no markdown, no explanation.""",
+                }
+            ],
+        )
+        text = message.content[0].text.strip()
+        result = json.loads(text)
+        return result
+    except Exception as e:
+        return {"error": str(e)}
 
 
 if __name__ == "__main__":

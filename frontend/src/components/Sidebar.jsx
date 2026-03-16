@@ -3,6 +3,7 @@ import { NavLink, useLocation } from 'react-router-dom'
 import {
   LayoutDashboard,
   Bot,
+  Monitor,
   Network,
   ListChecks,
   ScrollText,
@@ -19,6 +20,7 @@ import {
 
 const NAV_ITEMS = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
+  { to: '/system', label: 'System', icon: Monitor },
   { to: '/bots', label: 'Bots', icon: Bot },
   { to: '/gateway', label: 'Gateway', icon: Network },
   { to: '/tasks', label: 'Tasks', icon: ListChecks },
