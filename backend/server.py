@@ -2786,6 +2786,61 @@ def clear_system_cache():
     return {"cleared": True}
 
 
+@app.get("/api/ollama/models")
+def get_ollama_models():
+    try:
+        c = _get_persistent_ssh()
+        _, stdout, _ = c.exec_command("ollama list 2>/dev/null", timeout=15)
+        output = stdout.read().decode().strip()
+        models = []
+        for line in output.splitlines()[1:]:  # skip header
+            parts = line.split()
+            if len(parts) >= 3:
+                models.append({
+                    "name": parts[0],
+                    "id": parts[1],
+                    "size": parts[2] + (" " + parts[3] if len(parts) > 3 else ""),
+                })
+        return {"models": models}
+    except Exception as e:
+        logger.error(f"Ollama models error: {e}")
+        return {"error": "An internal error occurred"}
+
+
+@app.post("/api/ollama/pull")
+async def pull_ollama_model(body: dict):
+    model = body.get("model", "").strip()
+    if not model or ".." in model or "/" in model or "\\" in model:
+        return {"error": "Invalid model name"}
+    try:
+        c = _ssh_connect()
+        _, stdout, stderr = c.exec_command(f"ollama pull {model} 2>&1", timeout=300)
+        out = stdout.read().decode().strip()
+        c.close()
+        success = "success" in out.lower() or "pulling" in out.lower() or "already" in out.lower()
+        return {"success": success, "output": out[-500:] if len(out) > 500 else out}
+    except Exception as e:
+        logger.error(f"Ollama pull error: {e}")
+        return {"error": "An internal error occurred"}
+
+
+@app.delete("/api/ollama/models/{model_name:path}")
+def delete_ollama_model(model_name: str):
+    safe_name = model_name.strip()
+    if not safe_name or ".." in safe_name or "/" in safe_name or "\\" in safe_name:
+        return {"error": "Invalid model name"}
+    try:
+        c = _ssh_connect()
+        _, stdout, stderr = c.exec_command(f"ollama rm {safe_name} 2>&1", timeout=30)
+        out = stdout.read().decode().strip()
+        c.close()
+        success = "deleted" in out.lower() or out == ""
+        return {"success": success, "output": out}
+    except Exception as e:
+        logger.error(f"Ollama delete error: {e}")
+        return {"error": "An internal error occurred"}
+
+
 ALLOWED_ACTIONS = {
     "restart_phyllis_backend": "echo one | sudo -S systemctl restart phyllis-backend.service 2>&1 && echo 'Done'",
     "restart_phyllis_frontend": "echo one | sudo -S systemctl restart phyllis-frontend.service 2>&1 && echo 'Done'",
