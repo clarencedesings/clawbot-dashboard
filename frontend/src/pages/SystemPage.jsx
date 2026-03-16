@@ -23,7 +23,10 @@ export default function SystemPage() {
     setLoading(true)
     fetch('/api/system')
       .then((r) => r.json())
-      .then(setData)
+      .then((d) => {
+        console.log('System data received:', JSON.stringify(d, null, 2))
+        setData(d)
+      })
       .catch(() => setData(null))
       .finally(() => setLoading(false))
   }, [])

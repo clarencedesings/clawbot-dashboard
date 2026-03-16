@@ -58,6 +58,33 @@ CLAWBOT_USER = "clarence"
 CLAWBOT_PASSWORD = os.getenv("CLAWBOT_PASSWORD", "")
 OPENCLAW_CONFIG_PATH = "/home/clarence/.openclaw/openclaw.json"
 
+# Persistent SSH connection
+_ssh_persistent = {"client": None, "last_used": 0}
+SSH_KEEPALIVE_TIMEOUT = 60  # seconds
+
+
+def _get_persistent_ssh():
+    """Get or create a persistent SSH connection."""
+    now = time.time()
+    client = _ssh_persistent["client"]
+    if client:
+        try:
+            transport = client.get_transport()
+            if transport and transport.is_active():
+                _ssh_persistent["last_used"] = now
+                return client
+        except Exception:
+            pass
+    # Create new connection
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    client.connect(CLAWBOT_HOST, port=CLAWBOT_PORT, username=CLAWBOT_USER, password=CLAWBOT_PASSWORD)
+    client.get_transport().set_keepalive(30)
+    _ssh_persistent["client"] = client
+    _ssh_persistent["last_used"] = now
+    return client
+
+
 # Cache for SSH reads
 _config_cache = {"data": None, "timestamp": 0}
 _status_cache = {
@@ -2587,7 +2614,7 @@ async def paige_delete_processed(filename: str):
 
 
 _system_cache = {"data": None, "timestamp": 0}
-SYSTEM_CACHE_TTL = 10  # seconds
+SYSTEM_CACHE_TTL = 5  # seconds
 
 
 @app.get("/api/system")
@@ -2597,48 +2624,80 @@ def get_system_stats():
         return _system_cache["data"]
 
     try:
-        c = paramiko.SSHClient()
-        c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        c.connect(CLAWBOT_HOST, port=CLAWBOT_PORT, username=CLAWBOT_USER, password=CLAWBOT_PASSWORD)
+        c = _get_persistent_ssh()
 
-        def run(cmd):
-            _, stdout, _ = c.exec_command(cmd)
-            return stdout.read().decode().strip()
+        script = (
+            'echo "=CPU="\n'
+            "top -bn1 | grep 'Cpu(s)' | awk '{print $2+$4}'\n"
+            'echo "=RAM="\n'
+            "free -m | awk 'NR==2{print $2, $3, $4}'\n"
+            'echo "=DISK="\n'
+            "df -h / | awk 'NR==2{print $2, $3, $4, $5}'\n"
+            'echo "=GPU="\n'
+            "/usr/lib/wsl/lib/nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu --format=csv,noheader,nounits 2>/dev/null || echo 'unavailable'\n"
+            'echo "=PROCS="\n'
+            "ps aux --sort=-%cpu | awk 'NR>1 && NR<=6{print $1, $3, $4, $11}'\n"
+            'echo "=SVC="\n'
+            'for s in phyllis-backend.service phyllis-frontend.service paige-webhook.service cloudflared.service ollama.service mongod.service ssh.service; do echo "$s=$(systemctl is-active $s 2>/dev/null || echo inactive)"; done\n'
+            'echo "=SVCUSER="\n'
+            "systemctl --user is-active openclaw-gateway.service 2>/dev/null || echo inactive\n"
+        )
 
-        cpu = run("top -bn1 | grep 'Cpu(s)' | awk '{print $2+$4}'")
+        _, stdout, _ = c.exec_command(script, timeout=15)
+        output = stdout.read().decode("utf-8", errors="replace").strip()
 
-        ram_raw = run("free -m | awk 'NR==2{print $2, $3, $4}'")
-        ram_parts = ram_raw.split()
-        ram_total, ram_used, ram_free = ram_parts[0], ram_parts[1], ram_parts[2]
+        # Parse sections by markers
+        sections = {}
+        current_key = None
+        current_lines = []
+        for line in output.splitlines():
+            if line.startswith("=") and line.endswith("=") and len(line) >= 3:
+                if current_key:
+                    sections[current_key] = "\n".join(current_lines)
+                current_key = line.strip("=")
+                current_lines = []
+            else:
+                current_lines.append(line)
+        if current_key:
+            sections[current_key] = "\n".join(current_lines)
 
-        disk_raw = run("df -h / | awk 'NR==2{print $2, $3, $4, $5}'")
-        disk_parts = disk_raw.split()
-        disk_total, disk_used, disk_free, disk_pct = disk_parts[0], disk_parts[1], disk_parts[2], disk_parts[3]
+        # Parse CPU
+        cpu = sections.get("CPU", "0").strip()
 
-        gpu_raw = run("/usr/lib/wsl/lib/nvidia-smi --query-gpu=name,utilization.gpu,memory.used,memory.total,temperature.gpu --format=csv,noheader,nounits 2>/dev/null || echo 'unavailable'")
+        # Parse RAM
+        ram_parts = sections.get("RAM", "0 0 0").strip().split()
+        ram_total, ram_used, ram_free = (ram_parts + ["0", "0", "0"])[:3]
+
+        # Parse Disk
+        disk_parts = sections.get("DISK", "0 0 0 0%").strip().split()
+        disk_total, disk_used, disk_free, disk_pct = (disk_parts + ["0", "0", "0", "0%"])[:4]
+
+        # Parse GPU
+        gpu_raw = sections.get("GPU", "unavailable").strip()
         if gpu_raw == "unavailable" or not gpu_raw:
             gpu = None
         else:
             gparts = [x.strip() for x in gpu_raw.split(",")]
-            gpu = {"name": gparts[0], "utilization": gparts[1], "mem_used": gparts[2], "mem_total": gparts[3], "temperature": gparts[4]}
+            if len(gparts) >= 5:
+                gpu = {"name": gparts[0], "utilization": gparts[1], "mem_used": gparts[2], "mem_total": gparts[3], "temperature": gparts[4]}
+            else:
+                gpu = None
 
-        procs_raw = run("ps aux --sort=-%cpu | awk 'NR>1 && NR<=6{print $1, $3, $4, $11}'")
+        # Parse processes
         procs = []
-        for line in procs_raw.splitlines():
+        for line in sections.get("PROCS", "").splitlines():
             parts = line.split(None, 3)
             if len(parts) == 4:
                 procs.append({"user": parts[0], "cpu": parts[1], "mem": parts[2], "cmd": parts[3]})
 
-        services = ["phyllis-backend.service", "phyllis-frontend.service", "paige-webhook.service", "cloudflared.service", "ollama.service", "mongod.service", "ssh.service"]
+        # Parse services
         svc_status = {}
-        for svc in services:
-            status = run(f"systemctl is-active {svc} 2>/dev/null || echo inactive").splitlines()[0].strip()
-            svc_status[svc] = status
-
-        # openclaw-gateway runs as a user service
-        svc_status["openclaw-gateway.service"] = run("systemctl --user is-active openclaw-gateway.service 2>/dev/null || echo inactive").splitlines()[0].strip()
-
-        c.close()
+        for line in sections.get("SVC", "").splitlines():
+            if "=" in line:
+                svc, status = line.split("=", 1)
+                svc_status[svc] = status.strip()
+        svc_user_raw = sections.get("SVCUSER", "inactive").strip()
+        svc_status["openclaw-gateway.service"] = svc_user_raw.splitlines()[0].strip() if svc_user_raw else "inactive"
 
         result = {
             "cpu_percent": cpu,
@@ -2653,6 +2712,13 @@ def get_system_stats():
         return result
     except Exception as e:
         return {"error": str(e)}
+
+
+@app.post("/api/system/clear-cache")
+def clear_system_cache():
+    _system_cache["data"] = None
+    _system_cache["timestamp"] = 0
+    return {"cleared": True}
 
 
 ALLOWED_ACTIONS = {

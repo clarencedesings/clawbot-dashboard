@@ -426,42 +426,51 @@ export default function PaigePage() {
                     </p>
                     {seoResults[post.filename] && !seoResults[post.filename].error && (
                       <div className="bg-sidebar rounded-lg border border-border p-4 mt-3">
-                        <div className="flex items-center gap-3 mb-3">
-                          <span
-                            className="text-2xl font-bold"
-                            style={{
-                              color:
-                                seoResults[post.filename].score >= 80
-                                  ? '#22c55e'
-                                  : seoResults[post.filename].score >= 60
-                                    ? '#f59e0b'
-                                    : '#ef4444',
-                            }}
+                        <div className="flex items-center justify-between mb-3">
+                          <div className="flex items-center gap-3">
+                            <span
+                              className="text-2xl font-bold"
+                              style={{
+                                color:
+                                  seoResults[post.filename].score >= 80
+                                    ? '#22c55e'
+                                    : seoResults[post.filename].score >= 60
+                                      ? '#f59e0b'
+                                      : '#ef4444',
+                              }}
+                            >
+                              {seoResults[post.filename].score}/100
+                            </span>
+                            <span
+                              className="text-lg font-bold px-2.5 py-0.5 rounded"
+                              style={{
+                                backgroundColor:
+                                  seoResults[post.filename].score >= 80
+                                    ? '#22c55e22'
+                                    : seoResults[post.filename].score >= 60
+                                      ? '#f59e0b22'
+                                      : '#ef444422',
+                                color:
+                                  seoResults[post.filename].score >= 80
+                                    ? '#22c55e'
+                                    : seoResults[post.filename].score >= 60
+                                      ? '#f59e0b'
+                                      : '#ef4444',
+                              }}
+                            >
+                              {seoResults[post.filename].grade}
+                            </span>
+                            <span className="text-text-dim text-xs">
+                              {seoResults[post.filename].summary}
+                            </span>
+                          </div>
+                          <button
+                            onClick={() => setSeoResults(prev => ({ ...prev, [post.filename]: null }))}
+                            className="text-text-dim hover:text-white transition-colors cursor-pointer shrink-0 ml-2"
+                            title="Close SEO results"
                           >
-                            {seoResults[post.filename].score}/100
-                          </span>
-                          <span
-                            className="text-lg font-bold px-2.5 py-0.5 rounded"
-                            style={{
-                              backgroundColor:
-                                seoResults[post.filename].score >= 80
-                                  ? '#22c55e22'
-                                  : seoResults[post.filename].score >= 60
-                                    ? '#f59e0b22'
-                                    : '#ef444422',
-                              color:
-                                seoResults[post.filename].score >= 80
-                                  ? '#22c55e'
-                                  : seoResults[post.filename].score >= 60
-                                    ? '#f59e0b'
-                                    : '#ef4444',
-                            }}
-                          >
-                            {seoResults[post.filename].grade}
-                          </span>
-                          <span className="text-text-dim text-xs">
-                            {seoResults[post.filename].summary}
-                          </span>
+                            <X size={16} />
+                          </button>
                         </div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
                           {(seoResults[post.filename].checks || []).map((check, i) => (
