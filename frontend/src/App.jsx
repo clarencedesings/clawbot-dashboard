@@ -16,10 +16,16 @@ import KofiPage from './pages/KofiPage'
 import PaigePage from './pages/PaigePage'
 import ApprovalPage from './pages/ApprovalPage'
 import SettingsPage from './pages/SettingsPage'
+import ToolsPage from './pages/ToolsPage'
 
 export default function App() {
   const [authed, setAuthed] = useState(false)
   const [authChecked, setAuthChecked] = useState(false)
+
+  useEffect(() => {
+    const savedTheme = localStorage.getItem('dashboard_theme') || 'dark'
+    document.documentElement.setAttribute('data-theme', savedTheme)
+  }, [])
 
   useEffect(() => {
     const token = localStorage.getItem('clawbot_auth')
@@ -70,6 +76,7 @@ export default function App() {
           <Route path="/paige" element={<PaigePage />} />
           <Route path="/approvals" element={<ApprovalPage />} />
           <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/tools" element={<ToolsPage />} />
         </Routes>
       </main>
     </>

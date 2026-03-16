@@ -14,6 +14,7 @@ import {
   Coffee,
   PenLine,
   ShieldCheck,
+  Wrench,
   Menu,
   X,
   LogOut,
@@ -33,6 +34,7 @@ const NAV_ITEMS = [
   { to: '/kofi', label: 'Ko-fi', icon: Coffee },
   { to: '/paige', label: 'Paige', icon: PenLine, badgeKey: 'pending_posts' },
   { to: '/approvals', label: 'Approvals', icon: ShieldCheck, badgeKey: 'pending_tasks' },
+  { to: '/tools', label: 'Tools', icon: Wrench },
 ]
 
 export default function Sidebar({ onLogout }) {

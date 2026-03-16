@@ -14,14 +14,45 @@
   --color-offline: #ef4444;
 }
 
+[data-theme="light"] {
+  --color-bg: #f0f2f5;
+  --color-sidebar: #ffffff;
+  --color-card: #ffffff;
+  --color-accent: #6366f1;
+  --color-accent-hover: #4f46e5;
+  --color-text: #111827;
+  --color-text-dim: #6b7280;
+  --color-border: #e5e7eb;
+  --color-online: #16a34a;
+  --color-idle: #ca8a04;
+  --color-offline: #dc2626;
+}
+
+[data-theme="neon"] {
+  --color-bg: #020207;
+  --color-sidebar: #05050f;
+  --color-card: #08081a;
+  --color-accent: #a855f7;
+  --color-accent-hover: #c084fc;
+  --color-text: #e0e0ff;
+  --color-text-dim: #a0a0cc;
+  --color-border: #2d1b69;
+  --color-online: #00ff88;
+  --color-idle: #ffcc00;
+  --color-offline: #ff3366;
+}
+
+html, body, #root {
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  min-height: 100vh;
+}
+
 body {
   margin: 0;
-  background: var(--color-bg);
-  color: var(--color-text);
   font-family: system-ui, -apple-system, sans-serif;
 }
 
 #root {
   display: flex;
-  min-height: 100vh;
 }
