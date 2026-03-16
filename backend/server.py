@@ -1216,38 +1216,39 @@ def _fetch_store_summary() -> dict:
     try:
         total_products = int(_ssh_mongosh("db.products.countDocuments({})") or 0)
         active_products = int(_ssh_mongosh("db.products.countDocuments({status: 'active'})") or 0)
-        total_orders = int(_ssh_mongosh("db.orders.countDocuments({})") or 0)
-        total_subscribers = int(_ssh_mongosh("db.subscribers.countDocuments({})") or 0)
+        total_orders = int(_ssh_mongosh("db.payment_transactions.countDocuments({})") or 0)
+        total_subscribers = int(_ssh_mongosh("db.newsletter_subscribers.countDocuments({})") or 0)
 
-        # Orders today
+        # Orders today (created_at starts with today's date string)
+        today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         orders_today_raw = _ssh_mongosh(
-            "db.orders.countDocuments({created_at: {$gte: new Date(new Date().setHours(0,0,0,0))}})"
+            f"db.payment_transactions.countDocuments({{created_at: {{$regex: /^{today_str}/}}}})"
         )
         orders_today = int(orders_today_raw or 0)
 
-        # Total revenue
+        # Total revenue (amount_cents is in cents, divide by 100)
         total_rev_raw = _ssh_mongosh(
-            "JSON.stringify(db.orders.aggregate([{$group:{_id:null,t:{$sum:'$amount'}}}]).toArray())"
+            "JSON.stringify(db.payment_transactions.aggregate([{$group:{_id:null,t:{$sum:'$amount_cents'}}}]).toArray())"
         )
         total_revenue = 0.0
         if total_rev_raw:
             try:
                 agg = json.loads(total_rev_raw)
                 if agg:
-                    total_revenue = float(agg[0].get("t", 0))
+                    total_revenue = float(agg[0].get("t", 0)) / 100.0
             except (json.JSONDecodeError, IndexError, TypeError):
                 pass
 
         # Revenue today
         rev_today_raw = _ssh_mongosh(
-            "JSON.stringify(db.orders.aggregate([{$match:{created_at:{$gte:new Date(new Date().setHours(0,0,0,0))}}},{$group:{_id:null,t:{$sum:'$amount'}}}]).toArray())"
+            f"JSON.stringify(db.payment_transactions.aggregate([{{$match:{{created_at:{{$regex:/^{today_str}/}}}}}},{{$group:{{_id:null,t:{{$sum:'$amount_cents'}}}}}}]).toArray())"
         )
         revenue_today = 0.0
         if rev_today_raw:
             try:
                 agg = json.loads(rev_today_raw)
                 if agg:
-                    revenue_today = float(agg[0].get("t", 0))
+                    revenue_today = float(agg[0].get("t", 0)) / 100.0
             except (json.JSONDecodeError, IndexError, TypeError):
                 pass
 
@@ -1269,14 +1270,14 @@ def _fetch_store_summary() -> dict:
 
 
 def _fetch_recent_orders() -> list[dict]:
-    """Fetch last 10 orders from MongoDB on CLAWBOT via SSH + mongosh."""
+    """Fetch last 20 transactions from payment_transactions on CLAWBOT via SSH + mongosh."""
     now = time.time()
     if _store_orders_cache["data"] is not None and (now - _store_orders_cache["timestamp"]) < STORE_CACHE_TTL:
         return _store_orders_cache["data"]
 
     try:
         raw = _ssh_mongosh(
-            "JSON.stringify(db.orders.find({}).sort({created_at:-1}).limit(10).toArray())"
+            "JSON.stringify(db.payment_transactions.find({}).sort({created_at:-1}).limit(20).toArray())"
         )
         if not raw:
             return []
@@ -1284,17 +1285,13 @@ def _fetch_recent_orders() -> list[dict]:
         orders = json.loads(raw)
         result = []
         for o in orders:
-            products = o.get("products", [])
-            product_names = []
-            for p in products:
-                if isinstance(p, dict):
-                    product_names.append(p.get("name", p.get("title", "Unknown")))
-                elif isinstance(p, str):
-                    product_names.append(p)
+            # product_names is an array of strings like ["Mandala Serenity x1"]
+            products = o.get("product_names", [])
+            if not isinstance(products, list):
+                products = []
 
             created = o.get("created_at")
             if isinstance(created, dict) and "$date" in created:
-                # mongosh Extended JSON: {"$date": "2026-03-12T..."}
                 try:
                     dt = datetime.fromisoformat(created["$date"].replace("Z", "+00:00"))
                     created_str = dt.strftime("%Y-%m-%d %H:%M")
@@ -1305,11 +1302,11 @@ def _fetch_recent_orders() -> list[dict]:
             else:
                 created_str = "—"
 
-            email = o.get("email", "")
-            amount = o.get("amount", 0)
-            if isinstance(amount, dict):
-                amount = amount.get("$numberDouble", amount.get("$numberInt", 0))
-            amount = float(amount) if amount else 0.0
+            email = o.get("user_email", "")
+            amount_cents = o.get("amount_cents", 0)
+            if isinstance(amount_cents, dict):
+                amount_cents = amount_cents.get("$numberInt", amount_cents.get("$numberDouble", 0))
+            amount = float(amount_cents) / 100.0 if amount_cents else 0.0
 
             oid = o.get("_id", "")
             if isinstance(oid, dict):
@@ -1319,9 +1316,9 @@ def _fetch_recent_orders() -> list[dict]:
                 "id": str(oid),
                 "email": _mask_email(email),
                 "amount": round(amount, 2),
-                "status": o.get("status", "unknown"),
+                "status": o.get("payment_status", "unknown"),
                 "created_at": created_str,
-                "products": product_names,
+                "products": products,
             })
 
         _store_orders_cache["data"] = result
