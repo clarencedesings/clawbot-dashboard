@@ -2456,29 +2456,60 @@ async def paige_approve(filename: str, body: dict = None):
 
 
 @app.post("/api/paige/reject/{filename:path}")
-async def paige_reject(filename: str):
-    safe = filename.replace("'", "'\\''")
+async def paige_reject(filename: str, body: dict = None):
+    filename = _safe_remote_filename(filename)
+    reason = (body or {}).get("reason", "").strip()
     try:
         client = _ssh_connect()
+        sftp = client.open_sftp()
+        staged = f"{PAIGE_STAGED}/{filename}"
+        rejected = f"{PAIGE_REJECTED}/{filename}"
 
-        # Read title
-        _, stdout, _ = client.exec_command(f"head -20 '{PAIGE_STAGED}/{safe}'", timeout=10)
-        header = stdout.read().decode("utf-8", errors="replace")
-        meta = _parse_frontmatter(header)
-        title = meta["title"] or filename.replace(".md", "").replace("-", " ").title()
+        # Read title before moving
+        title = filename
+        try:
+            with sftp.open(staged, "r") as f:
+                content = f.read().decode("utf-8", errors="replace")
+            meta = _parse_frontmatter(content)
+            title = meta["title"] or filename.replace(".md", "").replace("-", " ").title()
+        except Exception:
+            pass
 
         # Move to rejected
-        cmd = f"mv '{PAIGE_STAGED}/{safe}' '{PAIGE_REJECTED}/{safe}'"
-        _, stdout, stderr = client.exec_command(cmd, timeout=10)
-        stdout.read()
+        try:
+            sftp.rename(staged, rejected)
+        except Exception:
+            pass
+
+        # Save rejection reason if provided
+        if reason:
+            notes_path = "/home/clarence/paige/rejection_notes.json"
+            try:
+                with sftp.open(notes_path, "r") as f:
+                    notes = json.loads(f.read().decode())
+            except Exception:
+                notes = []
+
+            notes.append({
+                "title": title,
+                "reason": reason,
+                "filename": filename,
+                "date": datetime.now(timezone.utc).isoformat(),
+            })
+            notes = notes[-10:]
+
+            with sftp.open(notes_path, "w") as f:
+                f.write(json.dumps(notes, indent=2))
+
+        sftp.close()
         client.close()
 
-        _send_telegram_phyllis(f"❌ Post rejected and archived: {title}")
+        _send_telegram_phyllis(f"❌ Post rejected: {title}" + (f"\nReason: {reason}" if reason else ""))
         _paige_status_cache["data"] = None
 
         return {"success": True, "message": f"Rejected: {title}"}
     except Exception as e:
-        logger.error(f"Error: {e}")
+        logger.error(f"Reject error: {e}")
         return {"success": False, "error": "An internal error occurred"}
 
 

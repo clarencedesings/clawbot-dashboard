@@ -27,6 +27,7 @@ export default function PaigePage() {
   const [actionLoading, setActionLoading] = useState({})
   const [toast, setToast] = useState(null)
   const [confirmReject, setConfirmReject] = useState(null)
+  const [rejectReason, setRejectReason] = useState('')
   const [published, setPublished] = useState([])
   const [copiedPin, setCopiedPin] = useState(null)
   const [confirmDelete, setConfirmDelete] = useState(null)
@@ -140,9 +141,15 @@ export default function PaigePage() {
   }
 
   const handleReject = (filename) => {
+    const reason = rejectReason.trim()
     setActionLoading((p) => ({ ...p, [filename]: 'reject' }))
     setConfirmReject(null)
-    fetch(`/api/paige/reject/${encodeURIComponent(filename)}`, { method: 'POST' })
+    setRejectReason('')
+    fetch(`/api/paige/reject/${encodeURIComponent(filename)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason }),
+    })
       .then((r) => r.json())
       .then((d) => {
         if (d.success) {
@@ -899,16 +906,28 @@ export default function PaigePage() {
       {confirmReject && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
           <div className="bg-card border border-border rounded-xl p-6 w-full max-w-md shadow-xl">
-            <h3 className="text-white font-semibold text-lg mb-2">
-              Reject Post?
-            </h3>
-            <p className="text-text-dim text-sm mb-6">
-              This will move the post to the rejected folder and notify Phyllis.
-              This action cannot be undone from the dashboard.
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-white font-semibold text-lg">Reject Post?</h3>
+              <button
+                onClick={() => { setConfirmReject(null); setRejectReason('') }}
+                className="text-text-dim hover:text-white transition-colors cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <p className="text-text-dim text-sm mb-4">
+              This will move the post to the rejected folder. Add a reason so Paige learns what to avoid in future posts.
             </p>
+            <textarea
+              value={rejectReason}
+              onChange={(e) => setRejectReason(e.target.value)}
+              placeholder="e.g. Too salesy, Not relevant to our audience, Tone doesn't match brand..."
+              rows={3}
+              className="w-full bg-sidebar border border-border rounded-lg px-4 py-3 text-white text-sm placeholder-text-dim resize-none focus:outline-none focus:border-accent mb-4"
+            />
             <div className="flex justify-end gap-3">
               <button
-                onClick={() => setConfirmReject(null)}
+                onClick={() => { setConfirmReject(null); setRejectReason('') }}
                 className="px-4 py-2 rounded-lg text-sm font-medium bg-sidebar border border-border text-text-dim hover:text-white transition-colors cursor-pointer"
               >
                 Cancel
@@ -917,7 +936,7 @@ export default function PaigePage() {
                 onClick={() => handleReject(confirmReject)}
                 className="px-4 py-2 rounded-lg text-sm font-medium bg-red-600 hover:bg-red-500 text-white transition-colors cursor-pointer"
               >
-                Yes, Reject
+                Reject
               </button>
             </div>
           </div>
