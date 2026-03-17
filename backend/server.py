@@ -97,12 +97,7 @@ def _get_persistent_ssh():
             pass
     # Create new connection
     client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.RejectPolicy())
-    client.load_system_host_keys()
-    try:
-        client.load_host_keys(os.path.expanduser('~/.ssh/known_hosts'))
-    except FileNotFoundError:
-        pass
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     client.connect(CLAWBOT_HOST, port=CLAWBOT_PORT, username=CLAWBOT_USER, password=CLAWBOT_PASSWORD)
     client.get_transport().set_keepalive(30)
     _ssh_persistent["client"] = client
@@ -197,12 +192,7 @@ MOCK_BOTS = [
 def _ssh_connect():
     """Create and return a connected paramiko SSH client."""
     client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.RejectPolicy())
-    client.load_system_host_keys()
-    try:
-        client.load_host_keys(os.path.expanduser('~/.ssh/known_hosts'))
-    except FileNotFoundError:
-        pass
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     client.connect(
         hostname=CLAWBOT_HOST,
         port=CLAWBOT_PORT,
@@ -2896,12 +2886,7 @@ def run_system_action(body: dict):
         return {"error": "Action not allowed"}
     try:
         c = paramiko.SSHClient()
-        c.set_missing_host_key_policy(paramiko.RejectPolicy())
-        c.load_system_host_keys()
-        try:
-            c.load_host_keys(os.path.expanduser('~/.ssh/known_hosts'))
-        except FileNotFoundError:
-            pass
+        c.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         c.connect(CLAWBOT_HOST, port=CLAWBOT_PORT, username=CLAWBOT_USER, password=CLAWBOT_PASSWORD)
         _, stdout, stderr = c.exec_command(ALLOWED_ACTIONS[action])
         out = stdout.read().decode().strip()
