@@ -2723,7 +2723,7 @@ def get_system_stats():
             'echo "=PROCS="\n'
             "ps aux --sort=-%cpu | awk 'NR>1 && NR<=6{print $1, $3, $4, $11}'\n"
             'echo "=SVC="\n'
-            'for s in phyllis-backend.service phyllis-frontend.service paige-webhook.service cloudflared.service ollama.service mongod.service ssh.service; do echo "$s=$(systemctl is-active $s 2>/dev/null || echo inactive)"; done\n'
+            'for s in phyllis-backend.service phyllis-frontend.service earthlie-backend.service earthlie-frontend.service paige-webhook.service cloudflared.service ollama.service mongod.service ssh.service; do echo "$s=$(systemctl is-active $s 2>/dev/null || echo inactive)"; done\n'
             'echo "=SVCUSER="\n'
             "systemctl --user is-active openclaw-gateway.service 2>/dev/null || echo inactive\n"
         )
@@ -2865,6 +2865,8 @@ def delete_ollama_model(model_name: str):
 ALLOWED_ACTIONS = {
     "restart_phyllis_backend": "echo one | sudo -S systemctl restart phyllis-backend.service 2>&1 && echo 'Done'",
     "restart_phyllis_frontend": "echo one | sudo -S systemctl restart phyllis-frontend.service 2>&1 && echo 'Done'",
+    "restart_earthlie_backend": "echo one | sudo -S systemctl restart earthlie-backend.service 2>&1 && echo 'Done'",
+    "restart_earthlie_frontend": "echo one | sudo -S systemctl restart earthlie-frontend.service 2>&1 && echo 'Done'",
     "restart_paige_webhook": "echo one | sudo -S systemctl restart paige-webhook.service 2>&1 && echo 'Done'",
     "restart_openclaw": "systemctl --user restart openclaw-gateway.service && echo 'Done'",
     "restart_ollama": "echo one | sudo -S systemctl restart ollama.service 2>&1 && echo 'Done'",
