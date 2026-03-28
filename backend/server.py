@@ -2,6 +2,7 @@ import bcrypt
 import hashlib
 import logging
 import re
+import subprocess
 from pathlib import Path
 from pydantic import BaseModel
 from fastapi import FastAPI, Query, Request
@@ -2953,6 +2954,65 @@ Return only valid JSON, no markdown, no explanation.""",
     except Exception as e:
         logger.error(f"Error: {e}")
         return {"error": "An internal error occurred"}
+
+
+# ---------------------------------------------------------------------------
+# Earthlie Services
+# ---------------------------------------------------------------------------
+
+EARTHLIE_SERVICES = ["EarthlieBackend", "EarthlieFrontend", "MongoDB"]
+
+
+@app.get("/api/earthlie/services/status")
+def earthlie_services_status():
+    """Get status of all Earthlie services."""
+    results = {}
+    for svc in EARTHLIE_SERVICES:
+        try:
+            out = subprocess.run(
+                ["powershell", "-Command", f"(Get-Service '{svc}').Status"],
+                capture_output=True, text=True, timeout=10
+            )
+            status_text = out.stdout.strip()
+            results[svc] = status_text if status_text else "Unknown"
+        except Exception as e:
+            results[svc] = "Unknown"
+    return {"services": results}
+
+
+@app.post("/api/earthlie/services/{service_name}/{action}")
+def earthlie_service_action(service_name: str, action: str):
+    """Start, stop, or restart an Earthlie service."""
+    if service_name not in EARTHLIE_SERVICES:
+        return {"success": False, "error": f"Unknown service: {service_name}"}
+    if action not in ("start", "stop", "restart"):
+        return {"success": False, "error": f"Unknown action: {action}"}
+
+    try:
+        if action == "restart":
+            result = subprocess.run(
+                ["powershell", "-Command",
+                 f"Start-Process -FilePath 'C:\\tools\\nssm\\nssm.exe' -ArgumentList 'restart','{service_name}' -Verb RunAs -Wait"],
+                capture_output=True, text=True, timeout=30
+            )
+        elif action == "stop":
+            result = subprocess.run(
+                ["powershell", "-Command",
+                 f"Start-Process -FilePath 'net' -ArgumentList 'stop','{service_name}' -Verb RunAs -Wait"],
+                capture_output=True, text=True, timeout=30
+            )
+        else:  # start
+            result = subprocess.run(
+                ["powershell", "-Command",
+                 f"Start-Process -FilePath 'net' -ArgumentList 'start','{service_name}' -Verb RunAs -Wait"],
+                capture_output=True, text=True, timeout=30
+            )
+
+        return {"success": True, "output": result.stdout.strip(), "error": result.stderr.strip() if result.returncode != 0 else ""}
+    except subprocess.TimeoutExpired:
+        return {"success": False, "error": "Operation timed out"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 
 if __name__ == "__main__":

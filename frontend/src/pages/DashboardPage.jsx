@@ -1,6 +1,8 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { Send, CheckCircle, XCircle, HardDrive } from 'lucide-react'
+import { Send, CheckCircle, XCircle, HardDrive, Play, Square, RotateCw, Loader2, Server } from 'lucide-react'
 import BotCard from '../components/BotCard'
+
+const EARTHLIE_SERVICES = ['EarthlieBackend', 'EarthlieFrontend', 'MongoDB']
 
 export default function DashboardPage() {
   const [bots, setBots] = useState([])
@@ -10,6 +12,9 @@ export default function DashboardPage() {
   const [sending, setSending] = useState(false)
   const [recentCmds, setRecentCmds] = useState([])
   const intervalRef = useRef(null)
+  const [earthlieStatus, setEarthlieStatus] = useState({})
+  const [earthlieLoading, setEarthlieLoading] = useState({})
+  const earthlieIntervalRef = useRef(null)
 
   const fetchAll = useCallback(() => {
     fetch('/api/bots')
@@ -38,6 +43,31 @@ export default function DashboardPage() {
     intervalRef.current = setInterval(fetchAll, 30000)
     return () => clearInterval(intervalRef.current)
   }, [fetchAll])
+
+  const fetchEarthlieStatus = useCallback(() => {
+    fetch('/api/earthlie/services/status')
+      .then((r) => r.json())
+      .then((data) => setEarthlieStatus(data.services || {}))
+      .catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    fetchEarthlieStatus()
+    earthlieIntervalRef.current = setInterval(fetchEarthlieStatus, 30000)
+    return () => clearInterval(earthlieIntervalRef.current)
+  }, [fetchEarthlieStatus])
+
+  const handleServiceAction = (service, action) => {
+    const key = `${service}-${action}`
+    setEarthlieLoading((prev) => ({ ...prev, [key]: true }))
+    fetch(`/api/earthlie/services/${service}/${action}`, { method: 'POST' })
+      .then((r) => r.json())
+      .then(() => {
+        setTimeout(fetchEarthlieStatus, 2000)
+      })
+      .catch(() => {})
+      .finally(() => setEarthlieLoading((prev) => ({ ...prev, [key]: false })))
+  }
 
   const formatModel = (m) => {
     if (!m) return '—'
@@ -173,6 +203,59 @@ export default function DashboardPage() {
         {bots.map((bot) => (
           <BotCard key={bot.id} bot={bot} />
         ))}
+      </div>
+
+      {/* Earthlie Services */}
+      <div className="bg-card rounded-xl border border-border p-5 mb-8">
+        <div className="flex items-center gap-2 mb-4">
+          <Server size={18} className="text-accent" />
+          <h3 className="text-white font-semibold">Earthlie Services</h3>
+        </div>
+        <div className="space-y-3">
+          {EARTHLIE_SERVICES.map((svc) => {
+            const status = earthlieStatus[svc] || 'Unknown'
+            const isRunning = status === 'Running'
+            return (
+              <div key={svc} className="flex items-center justify-between py-2 border-b border-border last:border-0">
+                <div className="flex items-center gap-3">
+                  <span className={`w-2.5 h-2.5 rounded-full ${isRunning ? 'bg-online' : 'bg-offline'}`} />
+                  <span className="text-white text-sm font-medium">{svc}</span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className={`text-xs px-2 py-1 rounded-full font-medium ${isRunning ? 'bg-online/15 text-online' : 'bg-offline/15 text-offline'}`}>
+                    {status}
+                  </span>
+                  <div className="flex gap-1.5">
+                    <button
+                      onClick={() => handleServiceAction(svc, 'start')}
+                      disabled={!!earthlieLoading[`${svc}-start`]}
+                      title="Start"
+                      className="p-1.5 rounded-md bg-sidebar border border-border hover:border-online/50 text-text-dim hover:text-online transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                      {earthlieLoading[`${svc}-start`] ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
+                    </button>
+                    <button
+                      onClick={() => handleServiceAction(svc, 'stop')}
+                      disabled={!!earthlieLoading[`${svc}-stop`]}
+                      title="Stop"
+                      className="p-1.5 rounded-md bg-sidebar border border-border hover:border-offline/50 text-text-dim hover:text-offline transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                      {earthlieLoading[`${svc}-stop`] ? <Loader2 size={14} className="animate-spin" /> : <Square size={14} />}
+                    </button>
+                    <button
+                      onClick={() => handleServiceAction(svc, 'restart')}
+                      disabled={!!earthlieLoading[`${svc}-restart`]}
+                      title="Restart"
+                      className="p-1.5 rounded-md bg-sidebar border border-border hover:border-accent/50 text-text-dim hover:text-accent transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                      {earthlieLoading[`${svc}-restart`] ? <Loader2 size={14} className="animate-spin" /> : <RotateCw size={14} />}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )
+          })}
+        </div>
       </div>
 
       {/* Quick Command */}
