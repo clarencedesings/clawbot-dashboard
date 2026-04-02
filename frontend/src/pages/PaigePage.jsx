@@ -44,6 +44,7 @@ export default function PaigePage() {
   const [postTags, setPostTags] = useState({})
   const [seoResults, setSeoResults] = useState({})
   const [seoLoading, setSeoLoading] = useState({})
+  const [topic, setTopic] = useState('')
   const intervalRef = useRef(null)
   const genTimerRef = useRef(null)
 
@@ -86,7 +87,11 @@ export default function PaigePage() {
   const handleGenerate = () => {
     setGenerating(true)
     setGenTimer(60)
-    fetch('/api/paige/generate', { method: 'POST' })
+    fetch('/api/paige/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ topic: topic.trim() || undefined }),
+    })
       .then((r) => r.json())
       .then((d) => {
         if (d.success) showToast('Paige is writing a new post...')
@@ -372,9 +377,17 @@ export default function PaigePage() {
             </p>
           </div>
         </div>
-        <div className="bg-card rounded-xl border border-border p-4 flex items-center justify-center">
+        <div className="bg-card rounded-xl border border-border p-4 flex flex-col gap-2">
+          <input
+            type="text"
+            placeholder="Topic (optional — leave blank for random)"
+            value={topic}
+            onChange={(e) => setTopic(e.target.value)}
+            disabled={generating}
+            className="w-full px-3 py-2 rounded-lg bg-[#1a1a2e] border border-border text-white text-sm placeholder-gray-500 focus:outline-none focus:border-[#d4948a]"
+          />
           <button
-            onClick={handleGenerate}
+            onClick={() => { handleGenerate(); setTopic(''); }}
             disabled={generating}
             className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             style={{ backgroundColor: generating ? '#8b6b66' : '#d4948a' }}

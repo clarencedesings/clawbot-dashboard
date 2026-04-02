@@ -16,6 +16,7 @@ import {
   ShieldCheck,
   Wrench,
   Box,
+  Leaf,
   Menu,
   X,
   LogOut,
@@ -36,6 +37,7 @@ const NAV_ITEMS = [
   { to: '/paige', label: 'Paige', icon: PenLine, badgeKey: 'pending_posts' },
   { to: '/approvals', label: 'Approvals', icon: ShieldCheck, badgeKey: 'pending_tasks' },
   { to: '/ollama', label: 'Ollama', icon: Box },
+  { to: '/earthlie-blog', label: 'Earthlie Blog', icon: Leaf },
   { to: '/tools', label: 'Tools', icon: Wrench },
 ]
 

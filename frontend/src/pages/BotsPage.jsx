@@ -2,17 +2,9 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import BotCard from '../components/BotCard'
 
-const paigeBot = {
-  id: 'paige',
-  name: 'Paige',
-  role: 'Blog Writer',
-  status: 'online',
-  model: 'ollama/llama3.1:8b',
-  description: 'AI Blog Writer for Phyllis Dianne Studio',
-}
-
 export default function BotsPage() {
   const [bots, setBots] = useState([])
+  const [paigeStatus, setPaigeStatus] = useState('offline')
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -20,7 +12,14 @@ export default function BotsPage() {
       .then((r) => r.json())
       .then((data) => setBots(data.bots || []))
       .catch(() => setBots([]))
+
+    fetch('/api/paige/status')
+      .then((r) => r.json())
+      .then((data) => setPaigeStatus(data.status || 'offline'))
+      .catch(() => setPaigeStatus('offline'))
   }, [])
+
+  const paigeOnline = paigeStatus === 'online'
 
   return (
     <div>
@@ -35,25 +34,25 @@ export default function BotsPage() {
         <div className="bg-card rounded-xl border border-border p-5 hover:border-accent/50 transition-colors">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
-              <span className="w-2.5 h-2.5 rounded-full bg-online" />
-              <h3 className="text-white font-semibold">{paigeBot.name}</h3>
+              <span className={`w-2.5 h-2.5 rounded-full ${paigeOnline ? 'bg-online' : 'bg-offline'}`} />
+              <h3 className="text-white font-semibold">Paige</h3>
             </div>
             <span className="text-xs px-2 py-1 rounded-full bg-accent/15 text-accent-hover capitalize">
-              {paigeBot.role}
+              Blog Writer
             </span>
           </div>
           <div className="space-y-2 text-sm">
             <div className="flex justify-between">
               <span className="text-text-dim">Status</span>
-              <span className="text-white capitalize">{paigeBot.status}</span>
+              <span className={`capitalize ${paigeOnline ? 'text-white' : 'text-offline'}`}>{paigeStatus}</span>
             </div>
             <div className="flex justify-between">
               <span className="text-text-dim">Model</span>
-              <span className="text-white">{paigeBot.model}</span>
+              <span className="text-white">ollama/llama3.1:8b</span>
             </div>
             <div className="flex justify-between">
               <span className="text-text-dim">Description</span>
-              <span className="text-white">{paigeBot.description}</span>
+              <span className="text-white">AI Blog Writer for Phyllis Dianne Studio</span>
             </div>
           </div>
           <button

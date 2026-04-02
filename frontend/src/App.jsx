@@ -18,6 +18,7 @@ import ApprovalPage from './pages/ApprovalPage'
 import SettingsPage from './pages/SettingsPage'
 import ToolsPage from './pages/ToolsPage'
 import OllamaPage from './pages/OllamaPage'
+import EarthlieBlogPage from './pages/EarthlieBlogPage'
 
 export default function App() {
   const [authed, setAuthed] = useState(false)
@@ -79,6 +80,7 @@ export default function App() {
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/tools" element={<ToolsPage />} />
           <Route path="/ollama" element={<OllamaPage />} />
+          <Route path="/earthlie-blog" element={<EarthlieBlogPage />} />
         </Routes>
       </main>
     </>

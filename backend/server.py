@@ -2230,7 +2230,7 @@ async def paige_status():
     try:
         client = _ssh_connect()
         cmd = (
-            "pgrep -f paige_webhook > /dev/null 2>&1 && echo ONLINE || echo OFFLINE; "
+            "systemctl is-active paige-webhook.service 2>/dev/null | grep -qx active && echo ONLINE || echo OFFLINE; "
             f"find {PAIGE_STAGED} -name '*.md' 2>/dev/null | wc -l; "
             f"find {PAIGE_PROCESSED} -name '*.md' 2>/dev/null | wc -l; "
             f"find {PAIGE_REJECTED} -name '*.md' 2>/dev/null | wc -l"
@@ -2310,12 +2310,18 @@ async def paige_staged_file(filename: str):
         client.close()
 
         meta = _parse_frontmatter(content)
+        body = content
+        if body.startswith("---"):
+            end = body.find("---", 3)
+            if end != -1:
+                body = body[end + 3:].strip()
         return {
             "filename": filename,
             "title": meta["title"] or filename.replace(".md", "").replace("-", " ").title(),
             "date": meta["date"],
             "description": meta["description"],
             "content": content,
+            "body": body,
         }
     except Exception as e:
         logger.error(f"Error: {e}")
@@ -2619,7 +2625,7 @@ async def paige_resend(filename: str, body: ResendBody = ResendBody()):
         safe_topic = topic.replace("'", "'\\''")
 
         # Run paige.py with the topic
-        cmd = f"cd {PAIGE_DIR} && python3 paige.py --topic '{safe_topic}'"
+        cmd = f"cd {PAIGE_DIR} && venv/bin/python paige.py --topic '{safe_topic}'"
         client.exec_command(cmd, timeout=5)
         client.close()
 
@@ -2633,10 +2639,19 @@ async def paige_resend(filename: str, body: ResendBody = ResendBody()):
 
 
 @app.post("/api/paige/generate")
-async def paige_generate():
+async def paige_generate(request: Request):
     try:
+        body = {}
+        try:
+            body = await request.json()
+        except Exception:
+            pass
+        topic = body.get("topic", "")
         client = _ssh_connect()
-        cmd = f"cd {PAIGE_DIR} && python3 paige.py"
+        cmd = f"cd {PAIGE_DIR} && venv/bin/python paige.py"
+        if topic:
+            safe_topic = topic.replace("'", "'\\''")
+            cmd += f" --topic '{safe_topic}'"
         client.exec_command(cmd, timeout=5)
         client.close()
         return {"success": True, "message": "Paige is writing a new post..."}
@@ -2922,7 +2937,7 @@ async def seo_preview(body: dict):
 Title: {title}
 
 Content:
-{content[:3000]}
+{content}
 
 Return a JSON object with exactly this structure:
 {{
@@ -3013,6 +3028,85 @@ def earthlie_service_action(service_name: str, action: str):
         return {"success": False, "error": "Operation timed out"}
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+
+# ---------------------------------------------------------------------------
+# Earthlie Blog proxy — forwards to earthlie backend on CLAWBOT via SSH
+# ---------------------------------------------------------------------------
+
+EARTHLIE_API = "http://localhost:8003"
+
+
+def _earthlie_request(method: str, path: str, body: str = "", timeout: int = 180):
+    """Execute an HTTP request to the earthlie backend via SSH."""
+    ssh = _get_persistent_ssh()
+    if body:
+        # Write body to temp file to avoid shell quoting issues
+        sftp = ssh.open_sftp()
+        with sftp.open("/tmp/_earthlie_req.json", "w") as f:
+            f.write(body)
+        sftp.close()
+        cmd = f"curl -s --max-time {timeout} -X {method} -H 'Content-Type: application/json' -d @/tmp/_earthlie_req.json '{EARTHLIE_API}{path}'"
+    else:
+        cmd = f"curl -s --max-time {timeout} -X {method} '{EARTHLIE_API}{path}'"
+    _, stdout, stderr = ssh.exec_command(cmd, timeout=timeout + 10)
+    return stdout.read().decode()
+
+
+@app.get("/api/earthlie/{path:path}")
+async def earthlie_proxy_get(path: str):
+    import json as _json
+    raw = _earthlie_request("GET", f"/{path}")
+    try:
+        return _json.loads(raw)
+    except Exception:
+        return PlainTextResponse(raw)
+
+
+@app.put("/api/earthlie/{path:path}")
+async def earthlie_proxy_put(path: str, request: Request):
+    import json as _json
+    import asyncio
+    try:
+        req_body = await request.json()
+        body_str = _json.dumps(req_body)
+    except Exception:
+        body_str = ""
+    raw = await asyncio.get_event_loop().run_in_executor(
+        None, lambda: _earthlie_request("PUT", f"/{path}", body_str)
+    )
+    try:
+        return _json.loads(raw)
+    except Exception:
+        return PlainTextResponse(raw)
+
+
+@app.post("/api/earthlie/{path:path}")
+async def earthlie_proxy_post(path: str, request: Request):
+    import json as _json
+    import asyncio
+    try:
+        req_body = await request.json()
+        body_str = _json.dumps(req_body)
+    except Exception:
+        body_str = ""
+    raw = await asyncio.get_event_loop().run_in_executor(
+        None, lambda: _earthlie_request("POST", f"/{path}", body_str)
+    )
+    try:
+        return _json.loads(raw)
+    except Exception:
+        return PlainTextResponse(raw)
+
+
+@app.delete("/api/earthlie/{path:path}")
+async def earthlie_proxy_delete(path: str):
+    import json as _json
+    raw = _earthlie_request("DELETE", f"/{path}")
+    try:
+        return _json.loads(raw)
+    except Exception:
+        return PlainTextResponse(raw)
 
 
 if __name__ == "__main__":
