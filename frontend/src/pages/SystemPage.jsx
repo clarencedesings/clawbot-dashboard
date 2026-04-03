@@ -4,6 +4,7 @@ import { Cpu, MemoryStick, HardDrive, Activity, Server, Thermometer } from 'luci
 const ALLOWED_ACTIONS_MAP = {
   restart_phyllis_backend: true,
   restart_phyllis_frontend: true,
+  restart_nginx: 'restart_phyllis_frontend',
   restart_paige_webhook: true,
   restart_openclaw_gateway: true,
   restart_ollama: true,
@@ -12,6 +13,10 @@ const ALLOWED_ACTIONS_MAP = {
   restart_cloudflared: true,
   restart_earthlie_backend: true,
   restart_earthlie_frontend: true,
+}
+
+const SERVICE_LABELS = {
+  nginx: 'phyllis-frontend (nginx)',
 }
 
 const CONFIRM_ACTIONS = {
@@ -209,7 +214,7 @@ export default function SystemPage() {
                       />
                       <div className="min-w-0">
                         <p className="text-sm text-white font-mono truncate">
-                          {name}
+                          {SERVICE_LABELS[name] || name}
                         </p>
                         <p
                           className={`text-[10px] ${

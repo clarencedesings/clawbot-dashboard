@@ -17,6 +17,7 @@ import {
   Wrench,
   Box,
   Leaf,
+  BarChart3,
   Menu,
   X,
   LogOut,
@@ -38,6 +39,7 @@ const NAV_ITEMS = [
   { to: '/approvals', label: 'Approvals', icon: ShieldCheck, badgeKey: 'pending_tasks' },
   { to: '/ollama', label: 'Ollama', icon: Box },
   { to: '/earthlie-blog', label: 'Earthlie Blog', icon: Leaf },
+  { to: '/analytics', label: 'Analytics', icon: BarChart3 },
   { to: '/tools', label: 'Tools', icon: Wrench },
 ]
 

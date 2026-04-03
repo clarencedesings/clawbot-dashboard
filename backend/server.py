@@ -2430,7 +2430,7 @@ async def paige_approve(filename: str, body: dict = None):
         cmds = " && ".join([
             f"cp '{PAIGE_STAGED}/{safe}' '{PHYLLIS_BLOG_DIR}/{safe}'",
             f"cd {PHYLLIS_APP_DIR} && git add -A && git commit -m 'Paige: publish {safe_title}' && git push",
-            f"cd {PHYLLIS_APP_DIR}/frontend && npm run build && echo '{sudo_pass}' | sudo -S systemctl restart phyllis-frontend.service",
+            f"cd {PHYLLIS_APP_DIR}/frontend && npm run build && echo '{sudo_pass}' | sudo -S systemctl reload nginx",
             f"mv '{PAIGE_STAGED}/{safe}' '{PAIGE_PROCESSED}/{safe}'",
         ])
         _, stdout, stderr = client.exec_command(cmds, timeout=120)
@@ -2739,7 +2739,7 @@ def get_system_stats():
             'echo "=PROCS="\n'
             "ps aux --sort=-%cpu | awk 'NR>1 && NR<=6{print $1, $3, $4, $11}'\n"
             'echo "=SVC="\n'
-            'for s in phyllis-backend.service phyllis-frontend.service earthlie-backend.service earthlie-frontend.service paige-webhook.service cloudflared.service ollama.service mongod.service ssh.service; do echo "$s=$(systemctl is-active $s 2>/dev/null || echo inactive)"; done\n'
+            'for s in phyllis-backend.service nginx.service earthlie-backend.service earthlie-frontend.service paige-webhook.service cloudflared.service ollama.service mongod.service ssh.service; do echo "$s=$(systemctl is-active $s 2>/dev/null || echo inactive)"; done\n'
             'echo "=SVCUSER="\n'
             "systemctl --user is-active openclaw-gateway.service 2>/dev/null || echo inactive\n"
         )
@@ -2880,7 +2880,7 @@ def delete_ollama_model(model_name: str):
 
 ALLOWED_ACTIONS = {
     "restart_phyllis_backend": "echo one | sudo -S systemctl restart phyllis-backend.service 2>&1 && echo 'Done'",
-    "restart_phyllis_frontend": "echo one | sudo -S systemctl restart phyllis-frontend.service 2>&1 && echo 'Done'",
+    "restart_phyllis_frontend": "echo one | sudo -S systemctl reload nginx 2>&1 && echo 'Done'",
     "restart_earthlie_backend": "echo one | sudo -S systemctl restart earthlie-backend.service 2>&1 && echo 'Done'",
     "restart_earthlie_frontend": "echo one | sudo -S systemctl restart earthlie-frontend.service 2>&1 && echo 'Done'",
     "restart_paige_webhook": "echo one | sudo -S systemctl restart paige-webhook.service 2>&1 && echo 'Done'",
@@ -3109,6 +3109,120 @@ async def earthlie_proxy_delete(path: str):
         return _json.loads(raw)
     except Exception:
         return PlainTextResponse(raw)
+
+
+# ---------------------------------------------------------------------------
+# Cloudflare Analytics
+# ---------------------------------------------------------------------------
+
+CLOUDFLARE_API_TOKEN = os.getenv("CLOUDFLARE_API_TOKEN", "")
+CLOUDFLARE_ZONES = {
+    "earthliedesigns.com": "8535e0abec53c9c4e1642fc80e265cab",
+    "phyllisdiannestudio.com": "915da1886a6078c28072f8e29ae15fc1",
+}
+
+CLOUDFLARE_GRAPHQL_URL = "https://api.cloudflare.com/client/v4/graphql"
+
+def _cf_query(zone_id: str, date_start: str, date_end: str) -> dict:
+    """Query Cloudflare GraphQL for a single zone's 7-day analytics."""
+    import httpx
+
+    query = """
+    {
+      viewer {
+        zones(filter: {zoneTag: "%s"}) {
+          httpRequests1dGroups(
+            limit: 7
+            filter: {date_geq: "%s", date_leq: "%s"}
+            orderBy: [date_ASC]
+          ) {
+            dimensions { date }
+            sum {
+              requests
+              pageViews
+              countryMap { clientCountryName requests }
+            }
+            uniq { uniques }
+          }
+        }
+      }
+    }
+    """ % (zone_id, date_start, date_end)
+
+    resp = httpx.post(
+        CLOUDFLARE_GRAPHQL_URL,
+        json={"query": query},
+        headers={
+            "Authorization": f"Bearer {CLOUDFLARE_API_TOKEN}",
+            "Content-Type": "application/json",
+        },
+        timeout=15,
+    )
+    return resp.json()
+
+
+@app.get("/api/analytics")
+def get_analytics():
+    if not CLOUDFLARE_API_TOKEN:
+        return {"error": "CLOUDFLARE_API_TOKEN not configured"}
+
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    week_ago = (datetime.now(timezone.utc) - timedelta(days=6)).strftime("%Y-%m-%d")
+
+    results = {}
+    for domain, zone_id in CLOUDFLARE_ZONES.items():
+        try:
+            raw = _cf_query(zone_id, week_ago, today)
+            zones = raw.get("data", {}).get("viewer", {}).get("zones", [])
+            if not zones:
+                results[domain] = {"error": "No data returned", "days": []}
+                continue
+
+            groups = zones[0].get("httpRequests1dGroups", [])
+
+            days = []
+            total_requests = 0
+            total_pageviews = 0
+            total_uniques = 0
+            country_totals = {}
+
+            for g in groups:
+                date = g["dimensions"]["date"]
+                reqs = g["sum"]["requests"]
+                pvs = g["sum"]["pageViews"]
+                uniq = g["uniq"]["uniques"]
+                total_requests += reqs
+                total_pageviews += pvs
+                total_uniques += uniq
+
+                for c in g["sum"].get("countryMap", []):
+                    cc = c["clientCountryName"]
+                    country_totals[cc] = country_totals.get(cc, 0) + c["requests"]
+
+                days.append({
+                    "date": date,
+                    "requests": reqs,
+                    "pageViews": pvs,
+                    "uniques": uniq,
+                })
+
+            # Top 10 countries by request count
+            top_countries = sorted(country_totals.items(), key=lambda x: x[1], reverse=True)[:10]
+
+            results[domain] = {
+                "days": days,
+                "totals": {
+                    "requests": total_requests,
+                    "pageViews": total_pageviews,
+                    "uniques": total_uniques,
+                },
+                "topCountries": [{"country": c, "requests": r} for c, r in top_countries],
+            }
+        except Exception as e:
+            logger.error(f"Cloudflare analytics error for {domain}: {e}")
+            results[domain] = {"error": str(e), "days": []}
+
+    return results
 
 
 if __name__ == "__main__":
