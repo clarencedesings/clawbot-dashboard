@@ -3035,20 +3035,22 @@ def earthlie_service_action(service_name: str, action: str):
 # ---------------------------------------------------------------------------
 
 EARTHLIE_API = "http://localhost:8003"
+EARTHLIE_INTERNAL_TOKEN = os.environ.get("EARTHLIE_INTERNAL_TOKEN", "")
 
 
 def _earthlie_request(method: str, path: str, body: str = "", timeout: int = 180):
     """Execute an HTTP request to the earthlie backend via SSH."""
     ssh = _get_persistent_ssh()
+    token_header = f"-H 'x-internal-token: {EARTHLIE_INTERNAL_TOKEN}'" if EARTHLIE_INTERNAL_TOKEN and "/api/internal/" in path else ""
     if body:
         # Write body to temp file to avoid shell quoting issues
         sftp = ssh.open_sftp()
         with sftp.open("/tmp/_earthlie_req.json", "w") as f:
             f.write(body)
         sftp.close()
-        cmd = f"curl -s --max-time {timeout} -X {method} -H 'Content-Type: application/json' -d @/tmp/_earthlie_req.json '{EARTHLIE_API}{path}'"
+        cmd = f"curl -s --max-time {timeout} -X {method} -H 'Content-Type: application/json' {token_header} -d @/tmp/_earthlie_req.json '{EARTHLIE_API}{path}'"
     else:
-        cmd = f"curl -s --max-time {timeout} -X {method} '{EARTHLIE_API}{path}'"
+        cmd = f"curl -s --max-time {timeout} -X {method} {token_header} '{EARTHLIE_API}{path}'"
     _, stdout, stderr = ssh.exec_command(cmd, timeout=timeout + 10)
     return stdout.read().decode()
 
