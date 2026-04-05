@@ -209,7 +209,7 @@ export default function SystemPage() {
                     <div className="flex items-center gap-2.5 min-w-0">
                       <span
                         className={`w-2 h-2 rounded-full shrink-0 ${
-                          isActive ? 'bg-green-500' : 'bg-red-500'
+                          isActive ? 'bg-green-500 pulse-online' : 'bg-red-500 pulse-offline'
                         }`}
                       />
                       <div className="min-w-0">

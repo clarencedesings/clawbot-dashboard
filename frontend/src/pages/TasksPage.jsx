@@ -14,6 +14,7 @@ import {
   VolumeX,
 } from 'lucide-react'
 import useSpeech from '../hooks/useSpeech'
+import JarvisAvatar from '../components/JarvisAvatar'
 
 const AGENTS = [
   { id: 'main', label: 'Jarvis (Main)' },
@@ -244,7 +245,10 @@ export default function TasksPage() {
 
       {/* Quick Command Panel */}
       <div className="bg-card rounded-xl border border-border p-6 mb-8">
-        <h3 className="text-white font-semibold mb-4">Quick Command</h3>
+        <div className="flex items-center gap-3 mb-4">
+          <JarvisAvatar speaking={!!speakingId} listening={listening} size={40} />
+          <h3 className="text-white font-semibold">Quick Command</h3>
+        </div>
         <textarea
           value={message}
           onChange={(e) => setMessage(e.target.value)}

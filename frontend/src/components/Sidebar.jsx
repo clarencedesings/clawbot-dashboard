@@ -21,6 +21,10 @@ import {
   Menu,
   X,
   LogOut,
+  Sun,
+  Moon,
+  ChevronsLeft,
+  ChevronsRight,
 } from 'lucide-react'
 import VoiceSelector from './VoiceSelector'
 
@@ -48,7 +52,24 @@ export default function Sidebar({ onLogout }) {
   const [serverOnline, setServerOnline] = useState(false)
   const [notifs, setNotifs] = useState({ pending_tasks: 0, pending_posts: 0, total: 0 })
   const [mobileOpen, setMobileOpen] = useState(false)
+  const [theme, setTheme] = useState(() => localStorage.getItem('theme_mode') || 'dark')
+  const [collapsed, setCollapsed] = useState(() => localStorage.getItem('sidebar_collapsed') === 'true')
   const location = useLocation()
+
+  const toggleTheme = () => {
+    const next = theme === 'dark' ? 'light' : 'dark'
+    setTheme(next)
+    localStorage.setItem('theme_mode', next)
+    document.documentElement.setAttribute('data-theme', next)
+  }
+
+  const toggleCollapse = () => {
+    setCollapsed((prev) => {
+      const next = !prev
+      localStorage.setItem('sidebar_collapsed', String(next))
+      return next
+    })
+  }
 
   // Close mobile sidebar on navigation
   useEffect(() => {
@@ -84,23 +105,40 @@ export default function Sidebar({ onLogout }) {
     return () => clearInterval(id)
   }, [])
 
+  // Mobile always uses expanded layout
+  const isCollapsed = collapsed && !mobileOpen
+
   const sidebarContent = (
     <>
-      <div className="p-5 border-b border-border flex items-center justify-between">
-        <div>
-          <h1 className="text-lg font-bold text-white tracking-tight">
-            Clawbot
-          </h1>
-          <p className="text-xs text-text-dim mt-0.5">Dashboard v1.0</p>
+      {/* Header */}
+      <div className={`border-b border-border flex items-center ${isCollapsed ? 'p-3 justify-center' : 'p-5 justify-between'}`}>
+        {!isCollapsed && (
+          <div className="min-w-0">
+            <h1 className="text-lg font-bold text-white tracking-tight">
+              Clawbot
+            </h1>
+            <p className="text-xs text-text-dim mt-0.5">Dashboard v1.0</p>
+          </div>
+        )}
+        <div className="flex items-center gap-1">
+          <button
+            onClick={toggleCollapse}
+            className="hidden md:flex text-text-dim hover:text-white transition-colors cursor-pointer p-1 rounded-md hover:bg-card"
+            title={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          >
+            {isCollapsed ? <ChevronsRight size={18} /> : <ChevronsLeft size={18} />}
+          </button>
+          <button
+            onClick={() => setMobileOpen(false)}
+            className="md:hidden text-text-dim hover:text-white transition-colors cursor-pointer"
+          >
+            <X size={20} />
+          </button>
         </div>
-        <button
-          onClick={() => setMobileOpen(false)}
-          className="md:hidden text-text-dim hover:text-white transition-colors cursor-pointer"
-        >
-          <X size={20} />
-        </button>
       </div>
-      <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
+
+      {/* Nav */}
+      <nav className={`flex-1 ${isCollapsed ? 'p-1.5' : 'p-3'} space-y-1 overflow-y-auto`}>
         {NAV_ITEMS.map((item) => {
           const badge = item.badgeKey ? notifs[item.badgeKey] || 0 : 0
           return (
@@ -108,18 +146,26 @@ export default function Sidebar({ onLogout }) {
               key={item.to}
               to={item.to}
               end={item.to === '/'}
+              title={isCollapsed ? item.label : undefined}
               className={({ isActive }) =>
-                `w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-colors ${
+                `w-full flex items-center rounded-lg text-sm transition-all duration-200 relative ${
+                  isCollapsed ? 'justify-center p-2.5' : 'gap-3 px-3 py-2.5'
+                } ${
                   isActive
-                    ? 'bg-accent text-white'
+                    ? 'bg-accent text-white sidebar-active'
                     : 'text-text-dim hover:bg-card hover:text-white'
                 }`
               }
             >
-              <item.icon size={18} />
-              <span className="flex-1">{item.label}</span>
-              {badge > 0 && (
+              <item.icon size={18} className="shrink-0" />
+              {!isCollapsed && <span className="flex-1 truncate">{item.label}</span>}
+              {!isCollapsed && badge > 0 && (
                 <span className="min-w-[20px] h-5 flex items-center justify-center rounded-full bg-red-500 text-white text-[10px] font-bold px-1.5">
+                  {badge}
+                </span>
+              )}
+              {isCollapsed && badge > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[14px] h-3.5 flex items-center justify-center rounded-full bg-red-500 text-white text-[8px] font-bold px-1">
                   {badge}
                 </span>
               )}
@@ -127,25 +173,44 @@ export default function Sidebar({ onLogout }) {
           )
         })}
       </nav>
-      <div className="p-4 border-t border-border space-y-3">
-        <VoiceSelector />
-        <div className="flex items-center gap-2">
+
+      {/* Footer */}
+      <div className={`border-t border-border space-y-2 ${isCollapsed ? 'p-2' : 'p-4 space-y-3'}`}>
+        {!isCollapsed && <VoiceSelector />}
+        <button
+          onClick={toggleTheme}
+          title={isCollapsed ? (theme === 'dark' ? 'Light Mode' : 'Dark Mode') : undefined}
+          className={`flex items-center rounded-lg text-text-dim hover:bg-card hover:text-white transition-colors cursor-pointer ${
+            isCollapsed ? 'w-full justify-center p-2.5' : 'w-full gap-2 px-3 py-2 text-xs'
+          }`}
+        >
+          {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
+          {!isCollapsed && <span>{theme === 'dark' ? 'Light Mode' : 'Dark Mode'}</span>}
+        </button>
+        <div className={`flex items-center ${isCollapsed ? 'justify-center py-1' : 'gap-2'}`}
+          title={isCollapsed ? `Server: ${serverOnline ? 'Online' : 'Offline'}` : undefined}
+        >
           <span
-            className={`w-2 h-2 rounded-full ${
-              serverOnline ? 'bg-online' : 'bg-offline'
+            className={`w-2 h-2 rounded-full shrink-0 ${
+              serverOnline ? 'bg-online pulse-online' : 'bg-offline pulse-offline'
             }`}
           />
-          <span className="text-xs text-text-dim">
-            Server: {serverOnline ? 'Online' : 'Offline'}
-          </span>
+          {!isCollapsed && (
+            <span className="text-xs text-text-dim">
+              Server: {serverOnline ? 'Online' : 'Offline'}
+            </span>
+          )}
         </div>
         {onLogout && (
           <button
             onClick={onLogout}
-            className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs text-text-dim hover:bg-card hover:text-red-400 transition-colors cursor-pointer"
+            title={isCollapsed ? 'Logout' : undefined}
+            className={`flex items-center rounded-lg text-text-dim hover:bg-card hover:text-red-400 transition-colors cursor-pointer ${
+              isCollapsed ? 'w-full justify-center p-2.5' : 'w-full gap-2 px-3 py-2 text-xs'
+            }`}
           >
             <LogOut size={14} />
-            <span>Logout</span>
+            {!isCollapsed && <span>Logout</span>}
           </button>
         )}
       </div>
@@ -178,11 +243,14 @@ export default function Sidebar({ onLogout }) {
       {/* Sidebar — always visible on md+, overlay on mobile */}
       <aside
         className={`
-          w-56 bg-sidebar border-r border-border flex flex-col shrink-0
+          border-r border-border flex flex-col shrink-0 overflow-hidden
           fixed md:static inset-y-0 left-0 z-50
-          transform transition-transform duration-200 ease-in-out
-          ${mobileOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+          transition-all duration-200 ease-in-out
+          ${mobileOpen ? 'w-56 translate-x-0' : `-translate-x-full md:translate-x-0 ${isCollapsed ? 'md:w-[60px]' : 'md:w-56'}`}
         `}
+        style={{
+          background: `linear-gradient(180deg, color-mix(in srgb, var(--color-accent) 6%, var(--color-sidebar)) 0%, var(--color-sidebar) 40%, color-mix(in srgb, var(--color-accent) 4%, var(--color-sidebar)) 100%)`,
+        }}
       >
         {sidebarContent}
       </aside>

@@ -35,7 +35,7 @@ export default function GatewayPage() {
             <span className="flex items-center gap-2">
               <span
                 className={`w-2 h-2 rounded-full ${
-                  gateway?.online ? 'bg-online' : 'bg-offline'
+                  gateway?.online ? 'bg-online pulse-online' : 'bg-offline pulse-offline'
                 }`}
               />
               <span className="text-white">

@@ -18,6 +18,7 @@ import {
   VolumeX,
 } from 'lucide-react'
 import useSpeech from '../hooks/useSpeech'
+import { useToast } from '../components/ToastProvider'
 
 export default function PaigePage() {
   const [status, setStatus] = useState(null)
@@ -28,7 +29,7 @@ export default function PaigePage() {
   const [previewPost, setPreviewPost] = useState(null)
   const [previewLoading, setPreviewLoading] = useState(false)
   const [actionLoading, setActionLoading] = useState({})
-  const [toast, setToast] = useState(null)
+  const showToast = useToast()
   const [confirmReject, setConfirmReject] = useState(null)
   const [rejectReason, setRejectReason] = useState('')
   const [published, setPublished] = useState([])
@@ -92,10 +93,6 @@ export default function PaigePage() {
     return () => clearInterval(intervalRef.current)
   }, [fetchData])
 
-  const showToast = (message, type = 'success') => {
-    setToast({ message, type })
-    setTimeout(() => setToast(null), 4000)
-  }
 
   const handleGenerate = () => {
     setGenerating(true)
@@ -314,19 +311,6 @@ export default function PaigePage() {
 
   return (
     <div>
-      {/* Toast */}
-      {toast && (
-        <div
-          className={`fixed top-6 right-6 z-50 px-5 py-3 rounded-lg shadow-lg text-sm font-medium ${
-            toast.type === 'error'
-              ? 'bg-red-500/90 text-white'
-              : 'bg-green-500/90 text-white'
-          }`}
-        >
-          {toast.message}
-        </div>
-      )}
-
       {/* Header */}
       <div className="mb-6 flex items-center justify-between">
         <div>
@@ -345,7 +329,7 @@ export default function PaigePage() {
         <div className="bg-card rounded-xl border border-border p-4 flex items-center gap-3">
           <span
             className={`w-3 h-3 rounded-full shrink-0 ${
-              isOnline ? 'bg-online' : 'bg-offline'
+              isOnline ? 'bg-online pulse-online' : 'bg-offline pulse-offline'
             }`}
           />
           <div>

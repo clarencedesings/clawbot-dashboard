@@ -34,7 +34,7 @@ export default function BotsPage() {
         <div className="bg-card rounded-xl border border-border p-5 hover:border-accent/50 transition-colors">
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
-              <span className={`w-2.5 h-2.5 rounded-full ${paigeOnline ? 'bg-online' : 'bg-offline'}`} />
+              <span className={`w-2.5 h-2.5 rounded-full ${paigeOnline ? 'bg-online pulse-online' : 'bg-offline pulse-offline'}`} />
               <h3 className="text-white font-semibold">Paige</h3>
             </div>
             <span className="text-xs px-2 py-1 rounded-full bg-accent/15 text-accent-hover capitalize">

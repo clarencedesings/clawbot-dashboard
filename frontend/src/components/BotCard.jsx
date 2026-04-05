@@ -1,7 +1,7 @@
 const STATUS_COLORS = {
-  online: 'bg-online',
+  online: 'bg-online pulse-online',
   idle: 'bg-idle',
-  offline: 'bg-offline',
+  offline: 'bg-offline pulse-offline',
 }
 
 export default function BotCard({ bot }) {

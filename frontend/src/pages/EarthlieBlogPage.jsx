@@ -4,6 +4,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from "react"
+import { useToast } from "../components/ToastProvider"
 import {
   Leaf,
   CheckCircle,
@@ -72,7 +73,7 @@ export default function EarthlieBlogPage() {
   const [editMeta, setEditMeta] = useState("")
   const [editLoading, setEditLoading] = useState(false)
   const [actionLoading, setActionLoading] = useState({})
-  const [toast, setToast] = useState(null)
+  const showToast = useToast()
   const [confirmReject, setConfirmReject] = useState(null)
   const [rejectReason, setRejectReason] = useState("")
   const [confirmDelete, setConfirmDelete] = useState(null)
@@ -93,10 +94,6 @@ export default function EarthlieBlogPage() {
 
   const speak = (text, id) => speakRaw(stripMd(text), id)
 
-  const showToast = (message, type = "success") => {
-    setToast({ message, type })
-    setTimeout(() => setToast(null), 4000)
-  }
 
   const fetchPosts = useCallback(async () => {
     try {
@@ -262,17 +259,6 @@ export default function EarthlieBlogPage() {
 
   return (
     <div>
-      {/* Toast */}
-      {toast && (
-        <div
-          className={`fixed top-6 right-6 z-50 px-5 py-3 rounded-lg shadow-lg text-sm font-medium ${
-            toast.type === "error" ? "bg-red-500/90 text-white" : "bg-green-500/90 text-white"
-          }`}
-        >
-          {toast.message}
-        </div>
-      )}
-
       {/* Header */}
       <div className="mb-6 flex items-center justify-between">
         <div>

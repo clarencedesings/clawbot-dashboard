@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
+import { useToast } from '../components/ToastProvider'
 import {
   ShieldCheck,
   CheckCircle,
@@ -18,7 +19,7 @@ export default function ApprovalPage() {
   const [history, setHistory] = useState({ approved: [], denied: [] })
   const [loading, setLoading] = useState(true)
   const [actionLoading, setActionLoading] = useState({})
-  const [toast, setToast] = useState(null)
+  const showToast = useToast()
   const [confirmDeny, setConfirmDeny] = useState(null)
   const [denyReason, setDenyReason] = useState('')
   const [approveModal, setApproveModal] = useState(null)
@@ -28,10 +29,6 @@ export default function ApprovalPage() {
   const [confirmDelete, setConfirmDelete] = useState(null) // { type, filename, label }
   const intervalRef = useRef(null)
 
-  const showToast = (message, type = 'success') => {
-    setToast({ message, type })
-    setTimeout(() => setToast(null), 4000)
-  }
 
   const fetchData = useCallback(() => {
     Promise.all([
@@ -137,17 +134,6 @@ export default function ApprovalPage() {
   return (
     <div>
       {/* Toast */}
-      {toast && (
-        <div
-          className={`fixed top-6 right-6 z-50 px-5 py-3 rounded-lg shadow-lg text-sm font-medium ${
-            toast.type === 'error'
-              ? 'bg-red-500/90 text-white'
-              : 'bg-green-500/90 text-white'
-          }`}
-        >
-          {toast.message}
-        </div>
-      )}
 
       {/* Header */}
       <div className="mb-6 flex items-center justify-between">

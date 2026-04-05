@@ -26,7 +26,7 @@ export default function App() {
   const [authChecked, setAuthChecked] = useState(false)
 
   useEffect(() => {
-    const savedTheme = localStorage.getItem('dashboard_theme') || 'dark'
+    const savedTheme = localStorage.getItem('theme_mode') || 'dark'
     document.documentElement.setAttribute('data-theme', savedTheme)
   }, [])
 
