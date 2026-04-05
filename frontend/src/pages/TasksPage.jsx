@@ -8,7 +8,12 @@ import {
   X,
   Calendar,
   Trash2,
+  Mic,
+  MicOff,
+  Volume2,
+  VolumeX,
 } from 'lucide-react'
+import useSpeech from '../hooks/useSpeech'
 
 const AGENTS = [
   { id: 'main', label: 'Jarvis (Main)' },
@@ -61,7 +66,61 @@ export default function TasksPage() {
   const [newTemplate, setNewTemplate] = useState('')
   const [addingTo, setAddingTo] = useState(null)
   const [notesOpen, setNotesOpen] = useState(false)
+  const [listening, setListening] = useState(false)
+  const [autoRead, setAutoRead] = useState(() => localStorage.getItem('jarvis_autoread') === 'true')
   const intervalRef = useRef(null)
+  const recognitionRef = useRef(null)
+  const prevHistoryRef = useRef([])
+  const { speak, stop: stopSpeaking, speakingId } = useSpeech()
+
+  // Speech Recognition setup
+  const startListening = () => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!SpeechRecognition) return
+    const recognition = new SpeechRecognition()
+    recognition.continuous = false
+    recognition.interimResults = true
+    recognition.lang = 'en-US'
+    recognitionRef.current = recognition
+    recognition.onresult = (event) => {
+      const transcript = Array.from(event.results)
+        .map((r) => r[0].transcript)
+        .join('')
+      setMessage(transcript)
+    }
+    recognition.onend = () => setListening(false)
+    recognition.onerror = () => setListening(false)
+    recognition.start()
+    setListening(true)
+  }
+
+  const stopListening = () => {
+    if (recognitionRef.current) {
+      recognitionRef.current.stop()
+      recognitionRef.current = null
+    }
+    setListening(false)
+  }
+
+  const toggleAutoRead = () => {
+    const next = !autoRead
+    setAutoRead(next)
+    localStorage.setItem('jarvis_autoread', String(next))
+  }
+
+  // Auto-read new responses
+  useEffect(() => {
+    if (!autoRead || history.length === 0) return
+    const prev = prevHistoryRef.current
+    if (prev.length > 0 && history.length > 0) {
+      const newest = history[0]
+      const wasThere = prev.find((p) => p.sent_at === newest.sent_at && p.message === newest.message)
+      if (!wasThere && newest.response) {
+        speak(newest.response, 'auto-' + newest.sent_at)
+      }
+    }
+    prevHistoryRef.current = history
+  }, [history, autoRead])
 
   const fetchHistory = useCallback(() => {
     fetch('/api/tasks/history')
@@ -218,6 +277,32 @@ export default function TasksPage() {
                 ? 'Send Command'
                 : 'Send & Queue Review'}
           </button>
+          {(window.SpeechRecognition || window.webkitSpeechRecognition) && (
+            <button
+              onClick={listening ? stopListening : startListening}
+              className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer flex items-center gap-1.5 ${
+                listening
+                  ? 'bg-red-600 hover:bg-red-500 text-white'
+                  : 'bg-sidebar border border-border text-text-dim hover:text-white hover:border-accent'
+              }`}
+              title={listening ? 'Stop listening' : 'Voice input'}
+            >
+              {listening ? <MicOff size={14} /> : <Mic size={14} />}
+              {listening && <span className="text-xs">Listening...</span>}
+            </button>
+          )}
+          <button
+            onClick={toggleAutoRead}
+            className={`px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer flex items-center gap-1.5 ${
+              autoRead
+                ? 'bg-accent/20 border border-accent text-accent'
+                : 'bg-sidebar border border-border text-text-dim hover:text-white hover:border-accent'
+            }`}
+            title={autoRead ? 'Auto-read on — click to disable' : 'Auto-read off — click to enable'}
+          >
+            {autoRead ? <Volume2 size={14} /> : <VolumeX size={14} />}
+            <span className="text-xs">Auto</span>
+          </button>
           <span className="text-text-dim text-xs ml-auto">Ctrl+Enter to send</span>
         </div>
       </div>
@@ -349,13 +434,30 @@ export default function TasksPage() {
                       )}
                     </div>
                   </div>
-                  <button
-                    onClick={() => setConfirmDeleteHistory(i)}
-                    className="text-text-dim hover:text-red-400 transition-colors cursor-pointer shrink-0 mt-0.5"
-                    title="Delete"
-                  >
-                    <Trash2 size={14} />
-                  </button>
+                  <div className="flex items-center gap-1.5 shrink-0 mt-0.5">
+                    {item.response && (
+                      <button
+                        onClick={() =>
+                          speakingId === `hist-${i}` ? stopSpeaking() : speak(item.response, `hist-${i}`)
+                        }
+                        className={`transition-colors cursor-pointer ${
+                          speakingId === `hist-${i}`
+                            ? 'text-accent'
+                            : 'text-text-dim hover:text-accent'
+                        }`}
+                        title={speakingId === `hist-${i}` ? 'Stop reading' : 'Read aloud'}
+                      >
+                        {speakingId === `hist-${i}` ? <VolumeX size={14} /> : <Volume2 size={14} />}
+                      </button>
+                    )}
+                    <button
+                      onClick={() => setConfirmDeleteHistory(i)}
+                      className="text-text-dim hover:text-red-400 transition-colors cursor-pointer"
+                      title="Delete"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>

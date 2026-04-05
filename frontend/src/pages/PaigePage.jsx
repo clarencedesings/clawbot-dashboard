@@ -14,7 +14,10 @@ import {
   RefreshCw,
   Terminal,
   Edit3,
+  Volume2,
+  VolumeX,
 } from 'lucide-react'
+import useSpeech from '../hooks/useSpeech'
 
 export default function PaigePage() {
   const [status, setStatus] = useState(null)
@@ -47,6 +50,16 @@ export default function PaigePage() {
   const [topic, setTopic] = useState('')
   const intervalRef = useRef(null)
   const genTimerRef = useRef(null)
+
+  const { speak: speakRaw, stop: stopSpeaking, speakingId } = useSpeech()
+  const stripMd = (text) =>
+    (text || '')
+      .replace(/#{1,6}\s+/g, '')
+      .replace(/\*\*(.+?)\*\*/g, '$1')
+      .replace(/\*(.+?)\*/g, '$1')
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+      .replace(/[#*\[\]()]/g, '')
+  const speak = (text, id) => speakRaw(stripMd(text), id)
 
   const fetchCronLog = useCallback(() => {
     setCronLoading(true)
@@ -518,6 +531,24 @@ export default function PaigePage() {
                   </div>
                   <div className="flex flex-wrap gap-2 shrink-0 items-end">
                     <button
+                      onClick={() =>
+                        speakingId === post.filename
+                          ? stopSpeaking()
+                          : speak(post.preview || post.title, post.filename)
+                      }
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer ${
+                        speakingId === post.filename
+                          ? 'bg-accent text-white'
+                          : 'bg-sidebar border border-border text-text-dim hover:text-white'
+                      }`}
+                    >
+                      {speakingId === post.filename ? (
+                        <><VolumeX size={12} /> Stop</>
+                      ) : (
+                        <><Volume2 size={12} /> Listen</>
+                      )}
+                    </button>
+                    <button
                       onClick={() => handlePreview(post.filename)}
                       className="px-3 py-1.5 rounded-lg text-xs font-medium bg-sidebar border border-border text-text-dim hover:text-white transition-colors cursor-pointer"
                     >
@@ -650,6 +681,24 @@ export default function PaigePage() {
                     )}
                   </div>
                   <div className="flex flex-wrap gap-2 shrink-0">
+                    <button
+                      onClick={() =>
+                        speakingId === post.filename
+                          ? stopSpeaking()
+                          : speak(post.body_preview || post.title, post.filename)
+                      }
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer ${
+                        speakingId === post.filename
+                          ? 'bg-accent text-white'
+                          : 'bg-sidebar border border-border text-text-dim hover:text-white'
+                      }`}
+                    >
+                      {speakingId === post.filename ? (
+                        <><VolumeX size={12} /> Stop</>
+                      ) : (
+                        <><Volume2 size={12} /> Listen</>
+                      )}
+                    </button>
                     <a
                       href="https://phyllisdiannestudio.com/blog"
                       target="_blank"

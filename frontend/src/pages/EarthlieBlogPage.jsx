@@ -16,7 +16,10 @@ import {
   Trash2,
   RotateCcw,
   Edit3,
+  Volume2,
+  VolumeX,
 } from "lucide-react"
+import useSpeech from "../hooks/useSpeech"
 
 const API = "/api/earthlie/api/internal/blog"
 
@@ -78,6 +81,17 @@ export default function EarthlieBlogPage() {
   const [redoLoading, setRedoLoading] = useState(false)
   const [topic, setTopic] = useState("")
   const genTimerRef = useRef(null)
+  const { speak: speakRaw, stop: stopSpeaking, speakingId } = useSpeech()
+
+  const stripMd = (text) =>
+    (text || "")
+      .replace(/#{1,6}\s+/g, "")
+      .replace(/\*\*(.+?)\*\*/g, "$1")
+      .replace(/\*(.+?)\*/g, "$1")
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+      .replace(/[#*\[\]()]/g, "")
+
+  const speak = (text, id) => speakRaw(stripMd(text), id)
 
   const showToast = (message, type = "success") => {
     setToast({ message, type })
@@ -135,11 +149,15 @@ export default function EarthlieBlogPage() {
   const handleApprove = async (id) => {
     setActionLoading((p) => ({ ...p, [id]: "approve" }))
     try {
-      await fetch(`${API}/${id}/approve`, { method: "PUT" })
+      const res = await fetch(`${API}/${id}/approve`, { method: "PUT" })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.detail || `Approve failed (${res.status})`)
+      }
       showToast("Post approved and published!")
       await fetchPosts()
-    } catch {
-      showToast("Failed to approve", "error")
+    } catch (e) {
+      showToast(e.message || "Failed to approve", "error")
     } finally {
       setActionLoading((p) => ({ ...p, [id]: null }))
     }
@@ -391,6 +409,20 @@ export default function EarthlieBlogPage() {
                   </div>
                   <div className="flex flex-wrap gap-2 shrink-0 items-end">
                     <button
+                      onClick={() =>
+                        speakingId === post._id ? stopSpeaking() : speak(post.body, post._id)
+                      }
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer flex items-center gap-1 ${
+                        speakingId === post._id
+                          ? "bg-accent/20 border border-accent text-accent"
+                          : "bg-sidebar border border-border text-text-dim hover:text-white"
+                      }`}
+                      title={speakingId === post._id ? "Stop reading" : "Read aloud"}
+                    >
+                      {speakingId === post._id ? <VolumeX size={12} /> : <Volume2 size={12} />}
+                      {speakingId === post._id ? "Stop" : "Listen"}
+                    </button>
+                    <button
                       onClick={() => setPreviewPost(post)}
                       className="px-3 py-1.5 rounded-lg text-xs font-medium bg-sidebar border border-border text-text-dim hover:text-white transition-colors cursor-pointer"
                     >
@@ -491,6 +523,20 @@ export default function EarthlieBlogPage() {
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-2 shrink-0">
+                    <button
+                      onClick={() =>
+                        speakingId === post._id ? stopSpeaking() : speak(post.body, post._id)
+                      }
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors cursor-pointer flex items-center gap-1 ${
+                        speakingId === post._id
+                          ? "bg-accent/20 border border-accent text-accent"
+                          : "bg-sidebar border border-border text-text-dim hover:text-white"
+                      }`}
+                      title={speakingId === post._id ? "Stop reading" : "Read aloud"}
+                    >
+                      {speakingId === post._id ? <VolumeX size={12} /> : <Volume2 size={12} />}
+                      {speakingId === post._id ? "Stop" : "Listen"}
+                    </button>
                     <a
                       href={`https://earthliedesigns.com/blog/${post.slug}`}
                       target="_blank"

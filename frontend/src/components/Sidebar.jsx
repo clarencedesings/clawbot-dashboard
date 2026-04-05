@@ -22,6 +22,7 @@ import {
   X,
   LogOut,
 } from 'lucide-react'
+import VoiceSelector from './VoiceSelector'
 
 const NAV_ITEMS = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
@@ -127,6 +128,7 @@ export default function Sidebar({ onLogout }) {
         })}
       </nav>
       <div className="p-4 border-t border-border space-y-3">
+        <VoiceSelector />
         <div className="flex items-center gap-2">
           <span
             className={`w-2 h-2 rounded-full ${
