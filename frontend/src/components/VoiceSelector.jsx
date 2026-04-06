@@ -1,40 +1,30 @@
-import { useState, useEffect } from "react"
+import { useState } from "react"
 import { Volume2 } from "lucide-react"
 
-const VOICE_KEY = "preferred_voice"
+const VOICE_KEY = "tts_voice"
+
+const VOICES = [
+  { id: "nova", label: "Nova", desc: "Warm, female" },
+  { id: "shimmer", label: "Shimmer", desc: "Soft, female" },
+  { id: "alloy", label: "Alloy", desc: "Neutral" },
+  { id: "echo", label: "Echo", desc: "Smooth, male" },
+  { id: "fable", label: "Fable", desc: "Expressive" },
+  { id: "onyx", label: "Onyx", desc: "Deep, male" },
+]
 
 /**
- * Compact voice picker for the sidebar. Reads/writes localStorage directly
- * so the useSpeech hook picks up the selection on next speak() call.
+ * Compact voice picker for OpenAI TTS voices.
+ * Writes to localStorage so useSpeech picks it up on next speak() call.
  */
 export default function VoiceSelector() {
-  const [voices, setVoices] = useState([])
-  const [selected, setSelected] = useState("")
-
-  useEffect(() => {
-    const synth = window.speechSynthesis
-    if (!synth) return
-
-    const load = () => {
-      const available = synth.getVoices()
-      if (available.length === 0) return
-      setVoices(available)
-      const saved = localStorage.getItem(VOICE_KEY)
-      const match = saved ? available.find((v) => v.name === saved) : null
-      setSelected(match ? match.name : available[0].name)
-    }
-
-    load()
-    synth.addEventListener("voiceschanged", load)
-    return () => synth.removeEventListener("voiceschanged", load)
-  }, [])
+  const [selected, setSelected] = useState(
+    () => localStorage.getItem(VOICE_KEY) || "nova"
+  )
 
   const handleChange = (e) => {
     setSelected(e.target.value)
     localStorage.setItem(VOICE_KEY, e.target.value)
   }
-
-  if (voices.length === 0) return null
 
   return (
     <div className="flex items-center gap-2">
@@ -45,9 +35,9 @@ export default function VoiceSelector() {
         className="flex-1 bg-sidebar border border-border rounded px-2 py-1 text-[11px] text-text-dim focus:outline-none focus:border-accent cursor-pointer truncate"
         title="TTS voice"
       >
-        {voices.map((v) => (
-          <option key={v.name} value={v.name}>
-            {v.name}
+        {VOICES.map((v) => (
+          <option key={v.id} value={v.id}>
+            {v.label} — {v.desc}
           </option>
         ))}
       </select>

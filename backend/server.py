@@ -2182,6 +2182,7 @@ PHYLLIS_BLOG_DIR = "/home/clarence/PhyllisDiAnneStudio-App/frontend/public/blog"
 PHYLLIS_APP_DIR = "/home/clarence/PhyllisDiAnneStudio-App"
 PHYLLIS_CHAT_ID = "1540152448"
 PHYLLIS_BOT_TOKEN = os.getenv("PHYLLIS_BOT_TOKEN", "")
+PHYLLIS_ADMIN_TOKEN = os.getenv("PHYLLIS_ADMIN_TOKEN", "")
 
 _paige_status_cache = {"data": None, "timestamp": 0}
 PAIGE_CACHE_TTL = 15
@@ -2407,35 +2408,43 @@ async def paige_approve(filename: str, body: dict = None):
         body = re.sub(r'^####\s+.*$', '', body, flags=re.MULTILINE)
         body = body.strip()
 
-        # Post to Phyllis blog API
-        import requests
+        # Post to Phyllis blog API via SSH (backend only listens on localhost)
         try:
-            requests.post(
-                "http://192.168.0.130:8001/api/admin/blog",
-                json={
-                    "title": title,
-                    "body": body,
-                    "date_published": scheduled_date or meta.get("date", ""),
-                    "category": req_category or meta.get("category", ""),
-                    "tags": req_tags or [t.strip() for t in meta.get("tags", "").strip("[]").split(",") if t.strip()],
-                },
-                headers={"x-admin-token": "phyllis-admin-token-2024"},
-                timeout=10,
+            blog_tags = req_tags or [t.strip() for t in meta.get("tags", "").strip("[]").split(",") if t.strip()]
+            blog_payload = json.dumps({
+                "title": title,
+                "body": body,
+                "date_published": scheduled_date or meta.get("date", ""),
+                "category": req_category or meta.get("category", ""),
+                "tags": blog_tags,
+            }).replace("'", "'\\''")
+            blog_cmd = (
+                f"curl -s -X POST http://localhost:8001/api/admin/blog "
+                f"-H 'Content-Type: application/json' "
+                f"-H 'x-admin-token: {PHYLLIS_ADMIN_TOKEN}' "
+                f"-d '{blog_payload}'"
             )
+            _, blog_out, _ = client.exec_command(blog_cmd, timeout=15)
+            blog_out.read()
         except Exception:
             pass  # non-blocking; file deploy below is the primary path
 
         # Copy to blog dir, git commit, rebuild, move to processed
         sudo_pass = os.getenv("SUDO_PASS", "")
-        cmds = " && ".join([
+        deploy_cmds = " && ".join([
             f"cp '{PAIGE_STAGED}/{safe}' '{PHYLLIS_BLOG_DIR}/{safe}'",
-            f"cd {PHYLLIS_APP_DIR} && git add -A && git commit -m 'Paige: publish {safe_title}' && git push",
+            f"cd {PHYLLIS_APP_DIR} && git add -A && (git diff --cached --quiet || git commit -m 'Paige: publish {safe_title}' && git push)",
             f"cd {PHYLLIS_APP_DIR}/frontend && npm run build && echo '{sudo_pass}' | sudo -S systemctl reload nginx",
-            f"mv '{PAIGE_STAGED}/{safe}' '{PAIGE_PROCESSED}/{safe}'",
         ])
-        _, stdout, stderr = client.exec_command(cmds, timeout=120)
+        _, stdout, stderr = client.exec_command(deploy_cmds, timeout=120)
         out = stdout.read().decode("utf-8", errors="replace")
         err = stderr.read().decode("utf-8", errors="replace")
+
+        # Always move to processed — the post is published via MongoDB regardless
+        _, stdout2, _ = client.exec_command(
+            f"mv '{PAIGE_STAGED}/{safe}' '{PAIGE_PROCESSED}/{safe}'", timeout=10
+        )
+        stdout2.read()
         client.close()
 
         # Send Telegram notification
@@ -2555,6 +2564,94 @@ async def paige_processed():
         return {"posts": posts}
     except Exception:
         return {"posts": []}
+
+
+@app.get("/api/paige/processed/{filename:path}")
+async def paige_processed_file(filename: str):
+    safe = _safe_remote_filename(filename)
+    try:
+        client = _ssh_connect()
+        cmd = f"cat '{PAIGE_PROCESSED}/{safe}'"
+        _, stdout, _ = client.exec_command(cmd, timeout=10)
+        content = stdout.read().decode("utf-8", errors="replace")
+        client.close()
+
+        meta = _parse_frontmatter(content)
+        body = content
+        if body.startswith("---"):
+            end = body.find("---", 3)
+            if end != -1:
+                body = body[end + 3:].strip()
+        return {
+            "filename": filename,
+            "title": meta["title"] or filename.replace(".md", "").replace("-", " ").title(),
+            "date": meta["date"],
+            "body": body,
+        }
+    except Exception as e:
+        logger.error(f"Error: {e}")
+        return {"error": "An internal error occurred"}
+
+
+@app.post("/api/paige/republish/{filename:path}")
+async def paige_republish(filename: str):
+    """Re-send a processed post to the Phyllis blog API (MongoDB) via SSH."""
+    safe = _safe_remote_filename(filename)
+    try:
+        client = _ssh_connect()
+        _, stdout, _ = client.exec_command(f"cat '{PAIGE_PROCESSED}/{safe}'", timeout=10)
+        content = stdout.read().decode("utf-8", errors="replace")
+
+        if not content.strip():
+            client.close()
+            return {"success": False, "error": "File is empty or not found"}
+
+        meta = _parse_frontmatter(content)
+        title = meta["title"] or filename.replace(".md", "").replace("-", " ").title()
+
+        body_text = content
+        if body_text.startswith("---"):
+            end = body_text.find("---", 3)
+            if end != -1:
+                body_text = body_text[end + 3:].strip()
+
+        # Clean body (same as approve)
+        body_text = re.sub(r'\*\*(.+?)\*\*', r'\1', body_text)
+        body_text = re.sub(r'^=+\s*$', '', body_text, flags=re.MULTILINE)
+        body_text = re.sub(r'^-{3,}\s*$', '', body_text, flags=re.MULTILINE)
+        body_text = re.sub(r'^\[Image description:.*?\]\s*', '', body_text, flags=re.MULTILINE)
+        body_text = re.sub(r'^\[Insert image\]\s*$', '', body_text, flags=re.MULTILINE)
+        body_text = re.sub(r'^####\s+.*$', '', body_text, flags=re.MULTILINE)
+        body_text = body_text.strip()
+
+        tags = [t.strip() for t in meta.get("tags", "").strip("[]").split(",") if t.strip()]
+        payload = json.dumps({
+            "title": title,
+            "body": body_text,
+            "date_published": meta.get("date", ""),
+            "category": meta.get("category", ""),
+            "tags": tags,
+        })
+        # Escape single quotes for shell
+        payload_escaped = payload.replace("'", "'\\''")
+        curl_cmd = (
+            f"curl -s -w '\\n%{{http_code}}' -X POST http://localhost:8001/api/admin/blog "
+            f"-H 'Content-Type: application/json' "
+            f"-H 'x-admin-token: {PHYLLIS_ADMIN_TOKEN}' "
+            f"-d '{payload_escaped}'"
+        )
+        _, stdout, stderr = client.exec_command(curl_cmd, timeout=15)
+        result = stdout.read().decode("utf-8", errors="replace").strip()
+        client.close()
+
+        lines = result.rsplit("\n", 1)
+        status_code = int(lines[-1]) if len(lines) > 1 and lines[-1].isdigit() else 0
+        if status_code >= 400:
+            return {"success": False, "error": f"Blog API returned {status_code}: {lines[0][:200]}"}
+        return {"success": True, "message": f"Published to blog: {title}"}
+    except Exception as e:
+        logger.error(f"Republish error: {e}")
+        return {"success": False, "error": str(e)}
 
 
 @app.get("/api/paige/cron-log")
@@ -3223,6 +3320,61 @@ def get_analytics():
             results[domain] = {"error": str(e), "days": []}
 
     return results
+
+
+# ---------------------------------------------------------------------------
+# OpenAI Text-to-Speech
+# ---------------------------------------------------------------------------
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OPENAI_TTS_VOICES = {"alloy", "echo", "fable", "onyx", "nova", "shimmer"}
+
+
+class TTSBody(BaseModel):
+    text: str
+    voice: str = "nova"
+
+
+@app.post("/api/tts")
+async def openai_tts(body: TTSBody):
+    from fastapi.responses import StreamingResponse
+    import openai
+
+    if not OPENAI_API_KEY:
+        return {"error": "OPENAI_API_KEY not configured"}
+
+    voice = body.voice.lower().strip()
+    if voice not in OPENAI_TTS_VOICES:
+        voice = "nova"
+
+    text = body.text.strip()
+    if not text:
+        return {"error": "No text provided"}
+
+    # Cap at 4096 chars (OpenAI TTS limit per request)
+    if len(text) > 4096:
+        text = text[:4096]
+
+    try:
+        client = openai.OpenAI(api_key=OPENAI_API_KEY)
+        response = client.audio.speech.create(
+            model="tts-1",
+            voice=voice,
+            input=text,
+        )
+
+        def iter_bytes():
+            for chunk in response.iter_bytes(chunk_size=4096):
+                yield chunk
+
+        return StreamingResponse(
+            iter_bytes(),
+            media_type="audio/mpeg",
+            headers={"Content-Type": "audio/mpeg"},
+        )
+    except Exception as e:
+        logger.error(f"TTS error: {e}")
+        return {"error": "TTS generation failed"}
 
 
 if __name__ == "__main__":

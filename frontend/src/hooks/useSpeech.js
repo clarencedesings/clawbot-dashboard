@@ -1,63 +1,160 @@
-import { useState, useEffect, useRef } from "react"
+import { useState, useRef, useCallback } from "react"
 
-const VOICE_KEY = "preferred_voice"
+const VOICE_KEY = "tts_voice"
+const MAX_CHUNK = 800
 
-/**
- * Shared speech hook — loads voices, persists selection, exposes speak/stop.
- * Usage:
- *   const { voices, selectedVoice, setSelectedVoice, speak, stop, speakingId } = useSpeech()
- */
-export default function useSpeech() {
-  const [voices, setVoices] = useState([])
-  const [selectedVoice, setSelectedVoiceState] = useState(null)
-  const [speakingId, setSpeakingId] = useState(null)
-  const savedNameRef = useRef(localStorage.getItem(VOICE_KEY) || "")
+/** Strip markdown and normalize unicode for clean TTS input */
+function stripMarkdown(text) {
+  return (text || "")
+    .replace(/```[\s\S]*?```/g, "")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/\*\*(.+?)\*\*/g, "$1")
+    .replace(/\*(.+?)\*/g, "$1")
+    .replace(/__(.+?)__/g, "$1")
+    .replace(/_(.+?)_/g, "$1")
+    .replace(/~~(.+?)~~/g, "$1")
+    .replace(/`(.+?)`/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/!\[([^\]]*)\]\([^)]+\)/g, "")
+    .replace(/^[-*+]\s+/gm, "")
+    .replace(/^\d+\.\s+/gm, "")
+    .replace(/^>\s+/gm, "")
+    .replace(/^---+$/gm, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/[\u2013\u2014]/g, "-")
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/\u2026/g, "...")
+    .replace(/[^\x00-\x7F]/g, " ")
+    .trim()
+}
 
-  // Load voices (async — Chrome fires onvoiceschanged, some browsers populate immediately)
-  useEffect(() => {
-    const synth = window.speechSynthesis
-    if (!synth) return
+/** Split text into chunks of MAX_CHUNK chars at sentence boundaries */
+function chunkText(text) {
+  const sentences = text.match(/[^.!?]+[.!?]+[\s]*/g)
+  if (!sentences) return text.trim() ? [text.trim()] : []
 
-    const load = () => {
-      const available = synth.getVoices()
-      if (available.length === 0) return
-      setVoices(available)
-
-      const saved = savedNameRef.current
-      const match = saved ? available.find((v) => v.name === saved) : null
-      setSelectedVoiceState(match || available[0])
+  const chunks = []
+  let buf = ""
+  for (const s of sentences) {
+    if ((buf + s).length > MAX_CHUNK && buf.trim()) {
+      chunks.push(buf.trim())
+      buf = s
+    } else {
+      buf += s
     }
+  }
+  if (buf.trim()) chunks.push(buf.trim())
+  return chunks.length > 0 ? chunks : [text.trim()]
+}
 
-    load()
-    synth.addEventListener("voiceschanged", load)
-    return () => synth.removeEventListener("voiceschanged", load)
+export default function useSpeech() {
+  const [speakingId, setSpeakingId] = useState(null)
+  const stoppedRef = useRef(false)
+  const audioRef = useRef(null)
+  const urlRef = useRef(null)
+  const selectedVoice = useRef(localStorage.getItem(VOICE_KEY) || "nova")
+
+  const setSelectedVoice = useCallback((voice) => {
+    selectedVoice.current = voice
+    localStorage.setItem(VOICE_KEY, voice)
   }, [])
 
-  const setSelectedVoice = (voice) => {
-    setSelectedVoiceState(voice)
-    if (voice) {
-      localStorage.setItem(VOICE_KEY, voice.name)
-      savedNameRef.current = voice.name
+  const cleanup = useCallback(() => {
+    if (audioRef.current) {
+      audioRef.current.pause()
+      audioRef.current.onended = null
+      audioRef.current.onerror = null
+      audioRef.current = null
     }
-  }
+    if (urlRef.current) {
+      URL.revokeObjectURL(urlRef.current)
+      urlRef.current = null
+    }
+  }, [])
 
-  const speak = (text, id) => {
-    const synth = window.speechSynthesis
-    if (!text || !synth) return
-    synth.cancel()
-    const utterance = new SpeechSynthesisUtterance(text)
-    utterance.rate = 1.0
-    if (selectedVoice) utterance.voice = selectedVoice
-    utterance.onend = () => setSpeakingId(null)
-    utterance.onerror = () => setSpeakingId(null)
-    setSpeakingId(id)
-    synth.speak(utterance)
-  }
-
-  const stop = () => {
-    window.speechSynthesis?.cancel()
+  const stop = useCallback(() => {
+    stoppedRef.current = true
+    cleanup()
     setSpeakingId(null)
-  }
+  }, [cleanup])
 
-  return { voices, selectedVoice, setSelectedVoice, speak, stop, speakingId }
+  const speak = useCallback((text, id) => {
+    if (!text) return
+
+    // Stop any current playback
+    stop()
+    stoppedRef.current = false
+    setSpeakingId(id)
+
+    const cleaned = stripMarkdown(text)
+    const chunks = chunkText(cleaned)
+    const voice = selectedVoice.current || "nova"
+    console.log(`[TTS] ${chunks.length} chunks, voice=${voice}`)
+
+    // Cache for prefetched blobs: index -> Promise<Blob>
+    const cache = {}
+
+    function fetchChunk(idx) {
+      if (cache[idx]) return cache[idx]
+      console.log(`[TTS] fetching chunk ${idx + 1}/${chunks.length}: ${chunks[idx].length} chars`)
+      cache[idx] = fetch("http://localhost:8002/api/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: chunks[idx], voice }),
+      }).then((res) => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        return res.blob()
+      })
+      return cache[idx]
+    }
+
+    function playChunk(idx) {
+      if (stoppedRef.current || idx >= chunks.length) {
+        cleanup()
+        if (!stoppedRef.current) setSpeakingId(null)
+        return
+      }
+
+      // Prefetch next chunk while this one plays
+      if (idx + 1 < chunks.length) fetchChunk(idx + 1)
+
+      fetchChunk(idx)
+        .then((blob) => {
+          if (stoppedRef.current) return
+          cleanup()
+          const url = URL.createObjectURL(blob)
+          urlRef.current = url
+          const audio = new Audio(url)
+          audioRef.current = audio
+          audio.onended = () => {
+            console.log(`[TTS] chunk ${idx + 1} done`)
+            playChunk(idx + 1)
+          }
+          audio.onerror = (e) => {
+            console.error(`[TTS] chunk ${idx + 1} playback error`, e)
+            playChunk(idx + 1)
+          }
+          audio.play().catch((err) => {
+            console.error(`[TTS] chunk ${idx + 1} play() rejected`, err)
+            playChunk(idx + 1)
+          })
+        })
+        .catch((err) => {
+          console.error(`[TTS] chunk ${idx + 1} fetch failed`, err)
+          playChunk(idx + 1)
+        })
+    }
+
+    playChunk(0)
+  }, [stop, cleanup])
+
+  return {
+    voices: [],
+    selectedVoice: selectedVoice.current,
+    setSelectedVoice,
+    speak,
+    stop,
+    speakingId,
+  }
 }

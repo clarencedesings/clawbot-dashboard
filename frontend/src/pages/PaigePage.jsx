@@ -62,6 +62,24 @@ export default function PaigePage() {
       .replace(/[#*\[\]()]/g, '')
   const speak = (text, id) => speakRaw(stripMd(text), id)
 
+  /** Fetch full post body, then speak it. Falls back to preview on error. */
+  const speakFullPost = (post, source) => {
+    if (speakingId === post.filename) { stopSpeaking(); return }
+    const fallback = source === 'staged' ? post.preview : post.body_preview
+    if (source === 'staged') {
+      fetch(`/api/paige/staged/${encodeURIComponent(post.filename)}`)
+        .then((r) => r.json())
+        .then((data) => speak(data.body || fallback || post.title, post.filename))
+        .catch(() => speak(fallback || post.title, post.filename))
+    } else {
+      // Published posts: fetch full content from processed endpoint
+      fetch(`/api/paige/processed/${encodeURIComponent(post.filename)}`)
+        .then((r) => r.json())
+        .then((data) => speak(data.body || fallback || post.title, post.filename))
+        .catch(() => speak(fallback || post.title, post.filename))
+    }
+  }
+
   const fetchCronLog = useCallback(() => {
     setCronLoading(true)
     fetch('/api/paige/cron-log')
@@ -212,6 +230,21 @@ export default function PaigePage() {
           fetchData()
         } else {
           showToast(d.error || 'Resend failed', 'error')
+        }
+      })
+      .catch(() => showToast('Failed to reach server', 'error'))
+      .finally(() => setActionLoading((p) => ({ ...p, [filename]: null })))
+  }
+
+  const handleRepublish = (filename) => {
+    setActionLoading((p) => ({ ...p, [filename]: 'republish' }))
+    fetch(`/api/paige/republish/${encodeURIComponent(filename)}`, { method: 'POST' })
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.success) {
+          showToast(d.message)
+        } else {
+          showToast(d.error || 'Republish failed', 'error')
         }
       })
       .catch(() => showToast('Failed to reach server', 'error'))
@@ -516,9 +549,7 @@ export default function PaigePage() {
                   <div className="flex flex-wrap gap-2 shrink-0 items-end">
                     <button
                       onClick={() =>
-                        speakingId === post.filename
-                          ? stopSpeaking()
-                          : speak(post.preview || post.title, post.filename)
+                        speakFullPost(post, 'staged')
                       }
                       className={`px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer ${
                         speakingId === post.filename
@@ -667,9 +698,7 @@ export default function PaigePage() {
                   <div className="flex flex-wrap gap-2 shrink-0">
                     <button
                       onClick={() =>
-                        speakingId === post.filename
-                          ? stopSpeaking()
-                          : speak(post.body_preview || post.title, post.filename)
+                        speakFullPost(post, 'published')
                       }
                       className={`px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer ${
                         speakingId === post.filename
@@ -709,6 +738,15 @@ export default function PaigePage() {
                     >
                       <Clipboard size={12} />
                       {copiedPin === post.filename ? 'Copied!' : 'Copy for Pinterest'}
+                    </button>
+                    <button
+                      onClick={() => handleRepublish(post.filename)}
+                      disabled={actionLoading[post.filename] === 'republish'}
+                      className="px-3 py-1.5 rounded-lg text-xs font-medium bg-sidebar border border-border text-text-dim hover:text-white transition-colors cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                      title="Resend to blog database"
+                    >
+                      <RefreshCw size={12} className={actionLoading[post.filename] === 'republish' ? 'animate-spin' : ''} />
+                      {actionLoading[post.filename] === 'republish' ? 'Sending...' : 'Republish'}
                     </button>
                     <button
                       onClick={() => setConfirmDelete({ type: 'processed', filename: post.filename, title: post.title })}
