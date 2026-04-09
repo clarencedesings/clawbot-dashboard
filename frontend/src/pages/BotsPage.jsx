@@ -48,7 +48,7 @@ export default function BotsPage() {
             </div>
             <div className="flex justify-between">
               <span className="text-text-dim">Model</span>
-              <span className="text-white">ollama/llama3.1:8b</span>
+              <span className="text-white">claude-sonnet-4-20250514</span>
             </div>
             <div className="flex justify-between">
               <span className="text-text-dim">Description</span>

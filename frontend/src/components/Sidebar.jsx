@@ -25,6 +25,10 @@ import {
   Moon,
   ChevronsLeft,
   ChevronsRight,
+  ChevronDown,
+  FolderUp,
+  ClipboardCheck,
+  PackageCheck,
 } from 'lucide-react'
 import VoiceSelector from './VoiceSelector'
 
@@ -48,12 +52,20 @@ const NAV_ITEMS = [
   { to: '/tools', label: 'Tools', icon: Wrench },
 ]
 
+const PHYLLIS_ITEMS = [
+  { to: '/phyllis/bot-control', label: 'Bot Control', icon: Bot },
+  { to: '/phyllis/canva-drop', label: 'Canva Drop', icon: FolderUp },
+  { to: '/phyllis/review-queue', label: 'Review Queue', icon: ClipboardCheck },
+  { to: '/phyllis/published', label: 'Published', icon: PackageCheck },
+]
+
 export default function Sidebar({ onLogout }) {
   const [serverOnline, setServerOnline] = useState(false)
   const [notifs, setNotifs] = useState({ pending_tasks: 0, pending_posts: 0, total: 0 })
   const [mobileOpen, setMobileOpen] = useState(false)
   const [theme, setTheme] = useState(() => localStorage.getItem('theme_mode') || 'dark')
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('sidebar_collapsed') === 'true')
+  const [phyllisOpen, setPhyllisOpen] = useState(() => localStorage.getItem('phyllis_nav_open') !== 'false')
   const location = useLocation()
 
   const toggleTheme = () => {
@@ -139,6 +151,52 @@ export default function Sidebar({ onLogout }) {
 
       {/* Nav */}
       <nav className={`flex-1 ${isCollapsed ? 'p-1.5' : 'p-3'} space-y-1 overflow-y-auto`}>
+        {/* Phyllis Studio section */}
+        <div className={`${isCollapsed ? '' : 'pb-2 mb-2'} border-b border-border`}>
+          <button
+            onClick={() => setPhyllisOpen(prev => {
+              const next = !prev
+              localStorage.setItem('phyllis_nav_open', String(next))
+              return next
+            })}
+            title={isCollapsed ? 'Phyllis Studio' : undefined}
+            className={`w-full flex items-center rounded-lg text-sm transition-all duration-200 ${
+              isCollapsed ? 'justify-center p-2.5' : 'gap-3 px-3 py-2'
+            } text-[#d4948a] hover:bg-[#d4948a]/10`}
+          >
+            <Store size={18} className="shrink-0" />
+            {!isCollapsed && (
+              <>
+                <span className="flex-1 text-left font-medium truncate">Phyllis Studio</span>
+                <ChevronDown size={14} className={`transition-transform ${phyllisOpen ? '' : '-rotate-90'}`} />
+              </>
+            )}
+          </button>
+          {phyllisOpen && (
+            <div className={`space-y-1 ${isCollapsed ? '' : 'mt-1'}`}>
+              {PHYLLIS_ITEMS.map((item) => (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  title={isCollapsed ? item.label : undefined}
+                  className={({ isActive }) =>
+                    `w-full flex items-center rounded-lg text-sm transition-all duration-200 relative ${
+                      isCollapsed ? 'justify-center p-2.5' : 'gap-3 px-3 py-2'
+                    } ${
+                      isActive
+                        ? 'bg-[#d4948a]/20 text-[#d4948a]'
+                        : 'text-text-dim hover:bg-[#d4948a]/10 hover:text-[#d4948a]'
+                    }`
+                  }
+                >
+                  <item.icon size={18} className="shrink-0" />
+                  {!isCollapsed && <span className="flex-1 truncate">{item.label}</span>}
+                </NavLink>
+              ))}
+            </div>
+          )}
+        </div>
+
         {NAV_ITEMS.map((item) => {
           const badge = item.badgeKey ? notifs[item.badgeKey] || 0 : 0
           return (

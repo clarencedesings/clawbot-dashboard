@@ -19,6 +19,7 @@ import {
   Edit3,
   Volume2,
   VolumeX,
+  RefreshCw,
 } from "lucide-react"
 import useSpeech from "../hooks/useSpeech"
 
@@ -155,6 +156,22 @@ export default function EarthlieBlogPage() {
       await fetchPosts()
     } catch (e) {
       showToast(e.message || "Failed to approve", "error")
+    } finally {
+      setActionLoading((p) => ({ ...p, [id]: null }))
+    }
+  }
+
+  const handleRepublish = async (id) => {
+    setActionLoading((p) => ({ ...p, [id]: "republish" }))
+    try {
+      const res = await fetch(`${API}/${id}/republish`, { method: "POST" })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        throw new Error(data.detail || `Republish failed (${res.status})`)
+      }
+      showToast(data.message || "Post republished to Facebook!")
+    } catch (e) {
+      showToast(e.message || "Failed to republish", "error")
     } finally {
       setActionLoading((p) => ({ ...p, [id]: null }))
     }
@@ -522,6 +539,15 @@ export default function EarthlieBlogPage() {
                     >
                       {speakingId === post._id ? <VolumeX size={12} /> : <Volume2 size={12} />}
                       {speakingId === post._id ? "Stop" : "Listen"}
+                    </button>
+                    <button
+                      onClick={() => handleRepublish(post._id)}
+                      disabled={actionLoading[post._id] === "republish"}
+                      className="px-3 py-1.5 rounded-lg text-xs font-medium bg-sidebar border border-border text-text-dim hover:text-white transition-colors cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+                      title="Resend to Facebook"
+                    >
+                      <RefreshCw size={12} className={actionLoading[post._id] === "republish" ? "animate-spin" : ""} />
+                      {actionLoading[post._id] === "republish" ? "Sending..." : "Republish"}
                     </button>
                     <a
                       href={`https://earthliedesigns.com/blog/${post.slug}`}

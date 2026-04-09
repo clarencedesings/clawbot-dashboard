@@ -20,6 +20,10 @@ import ToolsPage from './pages/ToolsPage'
 import OllamaPage from './pages/OllamaPage'
 import EarthlieBlogPage from './pages/EarthlieBlogPage'
 import AnalyticsPage from './pages/AnalyticsPage'
+import PhyllisBotControl from './pages/PhyllisBotControl'
+import PhyllisCanvaDrop from './pages/PhyllisCanvaDrop'
+import PhyllisReviewQueue from './pages/PhyllisReviewQueue'
+import PhyllisPublished from './pages/PhyllisPublished'
 
 export default function App() {
   const [authed, setAuthed] = useState(false)
@@ -83,6 +87,10 @@ export default function App() {
           <Route path="/ollama" element={<OllamaPage />} />
           <Route path="/earthlie-blog" element={<EarthlieBlogPage />} />
           <Route path="/analytics" element={<AnalyticsPage />} />
+          <Route path="/phyllis/bot-control" element={<PhyllisBotControl />} />
+          <Route path="/phyllis/canva-drop" element={<PhyllisCanvaDrop />} />
+          <Route path="/phyllis/review-queue" element={<PhyllisReviewQueue />} />
+          <Route path="/phyllis/published" element={<PhyllisPublished />} />
         </Routes>
       </main>
     </>

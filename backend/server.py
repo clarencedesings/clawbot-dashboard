@@ -501,6 +501,18 @@ async def get_bots():
 
     agent_names = {"main": "Jarvis", "business": "Business", "research": "Research", "coder": "Coder"}
 
+    # Read actual model names from openclaw.json config (overrides stale status data)
+    config_models = {}
+    config = ssh_read_openclaw_config()
+    if config:
+        agents_config = config.get("agents", {})
+        default_model = _resolve_model(
+            agents_config.get("defaults", {}).get("model", {}), "unknown"
+        )
+        for agent in agents_config.get("list", []):
+            aid = agent.get("id", agent.get("name", "unknown")).lower().replace(" ", "-")
+            config_models[aid] = _resolve_model(agent.get("model", default_model), default_model)
+
     bots = []
     for agent_id in ("main", "business", "research", "coder"):
         hb = heartbeat_map.get(agent_id, {})
@@ -511,8 +523,8 @@ async def get_bots():
         # Status from heartbeat
         is_online = hb.get("enabled", False)
 
-        # Model from most recent session
-        model = recent[0].get("model", "unknown") if recent else "unknown"
+        # Model from config (authoritative), fallback to session data
+        model = config_models.get(agent_id) or (recent[0].get("model", "unknown") if recent else "unknown")
 
         # Last active from agent data
         last_active = _format_age(ag.get("lastActiveAgeMs"))
@@ -1266,7 +1278,7 @@ def _ssh_mongosh(eval_str: str) -> str:
     client = _ssh_connect()
     # Use single quotes to prevent bash from expanding $ in mongosh queries
     escaped = eval_str.replace("'", "'\\''")
-    cmd = f"mongosh coloring_store --quiet --eval '{escaped}'"
+    cmd = f"mongosh 'mongodb://earthlie:HZgqs674uKcPVrvo5nYRsxeJ6yHJaNsD@localhost:27017/coloring_store?authSource=admin' --quiet --eval '{escaped}'"
     _, stdout, stderr = client.exec_command(cmd, timeout=10)
     out = stdout.read().decode("utf-8", errors="replace").strip()
     client.close()
@@ -3375,6 +3387,942 @@ async def openai_tts(body: TTSBody):
     except Exception as e:
         logger.error(f"TTS error: {e}")
         return {"error": "TTS generation failed"}
+
+
+# ── Phyllis Canva Drop ────────────────────────────────────────────
+
+CANVA_DROP_DIR = "/home/clarence/phyllis-imagebot/canva-drop"
+
+
+@app.get("/api/phyllis/canva-drop/folders")
+async def canva_drop_list_folders():
+    """List all theme folders in canva-drop/."""
+    try:
+        client = _ssh_connect()
+        _, stdout, _ = client.exec_command(
+            f"mkdir -p {CANVA_DROP_DIR} && "
+            f"for d in $(find {CANVA_DROP_DIR} -mindepth 1 -maxdepth 1 -type d | sort); do "
+            f"name=$(basename \"$d\"); "
+            f"count=$(find \"$d\" -maxdepth 1 -name '*.png' -o -name '*.PNG' | wc -l); "
+            f"size=$(du -sb \"$d\" 2>/dev/null | cut -f1); "
+            f"created=$(stat -c '%W' \"$d\" 2>/dev/null); "
+            f"echo \"$name|$count|$size|$created\"; "
+            f"done",
+            timeout=15,
+        )
+        raw = stdout.read().decode("utf-8", errors="replace").strip()
+        client.close()
+
+        folders = []
+        for line in raw.splitlines():
+            if not line.strip():
+                continue
+            parts = line.split("|")
+            if len(parts) >= 3:
+                folders.append({
+                    "name": parts[0],
+                    "file_count": int(parts[1].strip()),
+                    "total_size_bytes": int(parts[2].strip()) if parts[2].strip().isdigit() else 0,
+                    "created_at": parts[3] if len(parts) > 3 and parts[3] != "0" else None,
+                })
+        return {"folders": folders}
+    except Exception as e:
+        logger.error(f"canva-drop list folders: {e}")
+        return {"folders": []}
+
+
+class CreateFolderBody(BaseModel):
+    name: str
+
+
+@app.post("/api/phyllis/canva-drop/folders")
+async def canva_drop_create_folder(body: CreateFolderBody):
+    """Create a new theme folder."""
+    name = re.sub(r"[^a-z0-9-]", "", body.name.lower().replace(" ", "-").strip())
+    if not name:
+        return {"success": False, "error": "Invalid folder name"}
+    try:
+        client = _ssh_connect()
+        _, stdout, stderr = client.exec_command(
+            f"mkdir -p {CANVA_DROP_DIR}/{name}", timeout=10
+        )
+        stdout.read()
+        client.close()
+        return {"success": True, "name": name}
+    except Exception as e:
+        logger.error(f"canva-drop create folder: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@app.get("/api/phyllis/canva-drop/folders/{folder_name}")
+async def canva_drop_list_files(folder_name: str):
+    """List PNG files in a theme folder."""
+    folder_name = re.sub(r"[^a-z0-9-]", "", folder_name)
+    try:
+        client = _ssh_connect()
+        _, stdout, _ = client.exec_command(
+            f"find {CANVA_DROP_DIR}/{folder_name} -maxdepth 1 \\( -name '*.png' -o -name '*.PNG' \\) -printf '%f|%s|%T@\\n' 2>/dev/null | sort",
+            timeout=15,
+        )
+        raw = stdout.read().decode("utf-8", errors="replace").strip()
+        client.close()
+
+        files = []
+        for line in raw.splitlines():
+            if not line.strip():
+                continue
+            parts = line.split("|")
+            if len(parts) >= 2:
+                files.append({
+                    "name": parts[0],
+                    "size": int(parts[1]) if parts[1].isdigit() else 0,
+                    "modified_at": float(parts[2]) if len(parts) > 2 else None,
+                    "thumbnail": True,
+                })
+        return {"files": files}
+    except Exception as e:
+        logger.error(f"canva-drop list files: {e}")
+        return {"files": []}
+
+
+@app.post("/api/phyllis/canva-drop/folders/{folder_name}/upload")
+async def canva_drop_upload(folder_name: str, request: Request):
+    """Upload PNG files to a theme folder via SFTP."""
+    folder_name = re.sub(r"[^a-z0-9-]", "", folder_name)
+    if not folder_name:
+        return {"success": False, "error": "Invalid folder name"}
+
+    form = await request.form()
+    uploaded = []
+
+    try:
+        client = _ssh_connect()
+        sftp = client.open_sftp()
+
+        for key in form:
+            file = form[key]
+            if not hasattr(file, "read"):
+                continue
+            filename = file.filename or "upload.png"
+            if not filename.lower().endswith(".png"):
+                continue
+
+            content = await file.read()
+            if len(content) > 20 * 1024 * 1024:
+                continue  # skip files over 20MB
+
+            remote_path = f"{CANVA_DROP_DIR}/{folder_name}/{filename}"
+            with sftp.file(remote_path, "wb") as f:
+                f.write(content)
+            uploaded.append({"filename": filename, "size": len(content)})
+
+        sftp.close()
+        client.close()
+        return {"success": True, "uploaded": uploaded, "count": len(uploaded)}
+    except Exception as e:
+        logger.error(f"canva-drop upload: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@app.delete("/api/phyllis/canva-drop/folders/{folder_name}/{filename}")
+async def canva_drop_delete_file(folder_name: str, filename: str):
+    """Delete a single file from a theme folder."""
+    folder_name = re.sub(r"[^a-z0-9-]", "", folder_name)
+    filename = filename.replace("/", "").replace("..", "")
+    try:
+        client = _ssh_connect()
+        _, stdout, _ = client.exec_command(
+            f"rm -f {CANVA_DROP_DIR}/{folder_name}/{filename}", timeout=10
+        )
+        stdout.read()
+        client.close()
+        return {"success": True}
+    except Exception as e:
+        logger.error(f"canva-drop delete file: {e}")
+        return {"success": False, "error": str(e)}
+
+
+@app.delete("/api/phyllis/canva-drop/folders/{folder_name}")
+async def canva_drop_delete_folder(folder_name: str):
+    """Delete an entire theme folder."""
+    folder_name = re.sub(r"[^a-z0-9-]", "", folder_name)
+    if not folder_name:
+        return {"success": False, "error": "Invalid folder name"}
+    try:
+        client = _ssh_connect()
+        _, stdout, _ = client.exec_command(
+            f"rm -rf {CANVA_DROP_DIR}/{folder_name}", timeout=10
+        )
+        stdout.read()
+        client.close()
+        return {"success": True}
+    except Exception as e:
+        logger.error(f"canva-drop delete folder: {e}")
+        return {"success": False, "error": str(e)}
+
+
+_canva_preview_cache = {}
+
+
+@app.get("/api/phyllis/canva-drop/preview/{folder_name}/{filename}")
+async def canva_drop_preview(folder_name: str, filename: str):
+    """Serve a PNG preview from CLAWBOT via SFTP, cached 60s."""
+    from fastapi.responses import Response
+
+    folder_name = re.sub(r"[^a-z0-9-]", "", folder_name)
+    filename = filename.replace("/", "").replace("..", "")
+    cache_key = f"{folder_name}/{filename}"
+
+    now = time.time()
+    if cache_key in _canva_preview_cache:
+        data, ts = _canva_preview_cache[cache_key]
+        if now - ts < 60:
+            return Response(content=data, media_type="image/png",
+                          headers={"Cache-Control": "public, max-age=60"})
+
+    try:
+        client = _ssh_connect()
+        sftp = client.open_sftp()
+        remote_path = f"{CANVA_DROP_DIR}/{folder_name}/{filename}"
+        with sftp.file(remote_path, "rb") as f:
+            data = f.read()
+        sftp.close()
+        client.close()
+
+        _canva_preview_cache[cache_key] = (data, now)
+        # Evict old cache entries
+        for k in list(_canva_preview_cache.keys()):
+            if now - _canva_preview_cache[k][1] > 300:
+                del _canva_preview_cache[k]
+
+        return Response(content=data, media_type="image/png",
+                       headers={"Cache-Control": "public, max-age=60"})
+    except Exception as e:
+        logger.error(f"canva-drop preview: {e}")
+        return Response(content=b"", status_code=404)
+
+
+# ---------------------------------------------------------------------------
+#  Phyllis Bot Control endpoints
+# ---------------------------------------------------------------------------
+
+BOT_DIR = "/home/clarence/phyllis-imagebot"
+BOT_PYTHON = "/home/clarence/stable-diffusion-venv/bin/python3"
+
+
+@app.get("/api/phyllis/bot/status")
+async def phyllis_bot_status():
+    """Check if the bot is running and get last run info."""
+    try:
+        client = _ssh_connect()
+
+        # Check if bot.py is running
+        _, stdout, _ = client.exec_command("pgrep -f 'phyllis-imagebot/bot.py'", timeout=5)
+        pids = stdout.read().decode().strip()
+        is_running = bool(pids)
+
+        # Read last_run.json
+        _, stdout, _ = client.exec_command(f"cat {BOT_DIR}/last_run.json 2>/dev/null", timeout=5)
+        last_run_raw = stdout.read().decode().strip()
+        client.close()
+
+        last_run_data = {}
+        if last_run_raw:
+            try:
+                last_run_data = json.loads(last_run_raw)
+            except json.JSONDecodeError:
+                pass
+
+        # If status file says running but process is dead, it finished
+        if last_run_data.get("status") == "running" and not is_running:
+            last_run_data["status"] = "idle"
+
+        return {
+            "state": "running" if is_running else "idle",
+            "lastRun": last_run_data.get("started_at"),
+            "last_theme": last_run_data.get("theme"),
+            "mode": last_run_data.get("mode", "ideogram"),
+            "schedule_enabled": None,
+            "schedule_time": None,
+        }
+    except Exception as e:
+        logger.error(f"bot status: {e}")
+        return {"state": "idle", "lastRun": None, "mode": "ideogram"}
+
+
+@app.post("/api/phyllis/bot/run")
+async def phyllis_bot_run(request: Request):
+    """Start the bot on CLAWBOT in the background."""
+    body = await request.json()
+    theme = (body.get("theme") or "").strip()
+    category = body.get("category", "coloring_pages")
+    generate = body.get("generate", "all")
+    mode = body.get("mode", "ideogram")
+
+    if not theme:
+        return {"success": False, "detail": "Theme is required"}
+
+    # Sanitize inputs for shell safety
+    safe_theme = re.sub(r'[^a-zA-Z0-9 _-]', '', theme)
+    safe_category = re.sub(r'[^a-z_]', '', category)
+    safe_generate = re.sub(r'[^a-z_]', '', generate)
+    safe_mode = re.sub(r'[^a-z]', '', mode)
+
+    try:
+        client = _ssh_connect()
+
+        # Write last_run.json
+        now_iso = datetime.now(timezone.utc).isoformat()
+        status_json = json.dumps({
+            "status": "running",
+            "started_at": now_iso,
+            "theme": safe_theme,
+            "mode": safe_mode,
+        })
+        escaped_json = status_json.replace("'", "'\\''")
+        client.exec_command(f"echo '{escaped_json}' > {BOT_DIR}/last_run.json", timeout=5)
+
+        # Launch bot in background
+        cmd = (
+            f"cd {BOT_DIR} && nohup {BOT_PYTHON} bot.py"
+            f' --themes "{safe_theme}"'
+            f' --category "{safe_category}"'
+            f' --types "{safe_generate}"'
+            f' --mode "{safe_mode}"'
+            f" > {BOT_DIR}/bot_run.log 2>&1 &"
+        )
+        client.exec_command(cmd, timeout=5)
+        client.close()
+
+        return {"success": True, "message": "Bot started"}
+    except Exception as e:
+        logger.error(f"bot run: {e}")
+        return {"success": False, "detail": str(e)}
+
+
+@app.get("/api/phyllis/bot/log")
+async def phyllis_bot_log():
+    """Tail the last 50 lines of the bot run log."""
+    try:
+        client = _ssh_connect()
+        _, stdout, _ = client.exec_command(f"tail -n 50 {BOT_DIR}/bot_run.log 2>/dev/null", timeout=5)
+        raw = stdout.read().decode("utf-8", errors="replace").strip()
+        client.close()
+        lines = raw.split("\n") if raw else []
+        return {"lines": lines}
+    except Exception as e:
+        logger.error(f"bot log: {e}")
+        return {"lines": []}
+
+
+@app.get("/api/phyllis/bot/schedule")
+async def phyllis_bot_schedule_get():
+    """Read schedule.json from CLAWBOT."""
+    try:
+        client = _ssh_connect()
+        _, stdout, _ = client.exec_command(f"cat {BOT_DIR}/schedule.json 2>/dev/null", timeout=5)
+        raw = stdout.read().decode().strip()
+        client.close()
+
+        if raw:
+            data = json.loads(raw)
+            return {
+                "enabled": data.get("enabled", False),
+                "time": data.get("time", "02:00"),
+            }
+        return {"enabled": False, "time": "02:00"}
+    except Exception as e:
+        logger.error(f"bot schedule get: {e}")
+        return {"enabled": False, "time": "02:00"}
+
+
+@app.post("/api/phyllis/bot/schedule")
+async def phyllis_bot_schedule_set(request: Request):
+    """Update schedule.json and manage crontab on CLAWBOT."""
+    body = await request.json()
+    enabled = bool(body.get("enabled", False))
+    run_time = body.get("time", "02:00")
+
+    # Validate time format
+    if not re.match(r'^\d{2}:\d{2}$', run_time):
+        return {"success": False, "detail": "Invalid time format"}
+
+    hour, minute = run_time.split(":")
+
+    try:
+        client = _ssh_connect()
+
+        # Write schedule.json
+        sched_json = json.dumps({"enabled": enabled, "time": run_time})
+        escaped = sched_json.replace("'", "'\\''")
+        client.exec_command(f"echo '{escaped}' > {BOT_DIR}/schedule.json", timeout=5)
+
+        # Update crontab
+        cron_marker = "# phyllis-imagebot-schedule"
+        cron_line = f"{minute} {hour} * * * cd {BOT_DIR} && {BOT_PYTHON} bot.py --scheduled >> {BOT_DIR}/bot_run.log 2>&1 {cron_marker}"
+
+        if enabled:
+            # Remove old entry, add new one
+            cmd = (
+                f"(crontab -l 2>/dev/null | grep -v '{cron_marker}'; "
+                f"echo '{cron_line}') | crontab -"
+            )
+        else:
+            # Remove the entry
+            cmd = f"(crontab -l 2>/dev/null | grep -v '{cron_marker}') | crontab -"
+
+        _, stdout, stderr = client.exec_command(cmd, timeout=5)
+        stdout.read()  # wait for completion
+        client.close()
+
+        return {"success": True}
+    except Exception as e:
+        logger.error(f"bot schedule set: {e}")
+        return {"success": False, "detail": str(e)}
+
+
+# ---------------------------------------------------------------------------
+#  Phyllis Review Queue endpoints
+# ---------------------------------------------------------------------------
+
+_review_preview_cache: dict[str, tuple[bytes, float]] = {}
+
+
+@app.get("/api/phyllis/review-queue")
+async def phyllis_review_queue():
+    """Return PENDING and PUBLISHED products from phyllis_bot_queue."""
+    try:
+        raw = _ssh_mongosh(
+            'EJSON.stringify(db.phyllis_bot_queue.find({status:{$in:["PENDING","PUBLISHED"]}}).sort({created_at:-1}).toArray())'
+        )
+        if not raw or raw.startswith("MongoServerError"):
+            return {"products": []}
+        products = json.loads(raw)
+        for p in products:
+            if "$oid" in (p.get("_id") or {}):
+                p["_id"] = p["_id"]["$oid"]
+            if "$date" in (p.get("created_at") or {}):
+                p["created_at"] = p["created_at"]["$date"]
+            if "$date" in (p.get("updated_at") or {}):
+                p["updated_at"] = p["updated_at"]["$date"]
+            pc = p.get("price_cents")
+            if isinstance(pc, dict):
+                p["price_cents"] = int(pc.get("$numberInt") or pc.get("$numberLong") or 0)
+            elif isinstance(pc, (int, float)):
+                p["price_cents"] = int(pc)
+        return {"products": products}
+    except Exception as e:
+        logger.error(f"review-queue list: {e}")
+        return {"products": []}
+
+
+@app.get("/api/phyllis/published")
+async def phyllis_published():
+    """Return all published products from the Phyllis products collection."""
+    try:
+        raw = _ssh_mongosh(
+            'EJSON.stringify(db.products.find({status:"active"}).sort({created_at:-1}).toArray())'
+        )
+        if not raw or raw.startswith("MongoServerError"):
+            return {"products": []}
+        products = json.loads(raw)
+        for p in products:
+            if isinstance(p.get("_id"), dict) and "$oid" in p["_id"]:
+                p["_id"] = p["_id"]["$oid"]
+            if isinstance(p.get("created_at"), dict) and "$date" in p["created_at"]:
+                p["created_at"] = p["created_at"]["$date"]
+            pc = p.get("price_cents")
+            if isinstance(pc, dict):
+                p["price_cents"] = int(pc.get("$numberInt") or pc.get("$numberLong") or 0)
+            elif isinstance(pc, (int, float)):
+                p["price_cents"] = int(pc)
+            # Normalize fields for frontend
+            p.setdefault("title", p.get("name", ""))
+            p.setdefault("published_at", p.get("created_at", ""))
+        return {"products": products}
+    except Exception as e:
+        logger.error(f"phyllis published list: {e}")
+        return {"products": []}
+
+
+@app.patch("/api/phyllis/review-queue/{product_id}")
+async def phyllis_review_queue_update(product_id: str, request: Request):
+    """Update editable fields on a queued product."""
+    body = await request.json()
+    allowed = {"title", "description", "price_cents", "tags"}
+    updates = {k: v for k, v in body.items() if k in allowed}
+    if not updates:
+        return {"success": False, "detail": "No valid fields"}
+
+    set_parts = []
+    for k, v in updates.items():
+        if isinstance(v, str):
+            escaped = v.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+            set_parts.append(f'{k}:"{escaped}"')
+        elif isinstance(v, list):
+            items = ",".join(f'"{x}"' for x in v if isinstance(x, str))
+            set_parts.append(f"{k}:[{items}]")
+        else:
+            set_parts.append(f"{k}:{v}")
+    set_parts.append(f'updated_at:new Date()')
+
+    update_expr = "{$set:{" + ",".join(set_parts) + "}}"
+    try:
+        _ssh_mongosh(
+            f'db.phyllis_bot_queue.updateOne({{_id:ObjectId("{product_id}")}},{update_expr})'
+        )
+        return {"success": True}
+    except Exception as e:
+        logger.error(f"review-queue update: {e}")
+        return {"success": False, "detail": str(e)}
+
+
+@app.post("/api/phyllis/review-queue/{product_id}/publish")
+async def phyllis_review_queue_publish(product_id: str):
+    """
+    Full publish flow:
+    1. Run build_package.py on CLAWBOT (generates mockup, watermarked previews, cover, PDF)
+    2. Files are copied to Phyllis asset dirs by the script
+    3. Create product in Phyllis MongoDB via the admin API
+    4. Mark queue item as PUBLISHED
+    """
+    import traceback
+    try:
+        # Fetch the queue item
+        raw = _ssh_mongosh(
+            f'EJSON.stringify(db.phyllis_bot_queue.findOne({{_id:ObjectId("{product_id}")}}))'
+        )
+        if not raw:
+            return {"success": False, "detail": "Product not found"}
+        product = json.loads(raw)
+
+        image_paths = product.get("image_paths", [])
+        title = product.get("title", "Coloring Page")
+        theme = product.get("theme", "kawaii")
+        product_type = product.get("product_type", "single")
+
+        price_cents = product.get("price_cents", 0)
+        if isinstance(price_cents, dict):
+            price_cents = int(price_cents.get("$numberInt", price_cents.get("$numberLong", 0)))
+
+        tags = product.get("tags", [])
+        if isinstance(tags, list):
+            tags = ", ".join(tags)
+
+        description = product.get("description", "")
+        category = product.get("category", "coloring_pages")
+
+        # ── Step 1: Run build_package.py on CLAWBOT ──────────────
+        title_esc = title.replace("'", "'\\''")
+        theme_esc = theme.replace("'", "'\\''")
+        paths_json = json.dumps(image_paths).replace("'", "'\\''")
+
+        build_cmd = (
+            f"cd {BOT_DIR} && {BOT_PYTHON} build_package.py"
+            f" --item-id '{product_id}'"
+            f" --theme '{theme_esc}'"
+            f" --title '{title_esc}'"
+            f" --product-type '{product_type}'"
+            f" --image-paths '{paths_json}'"
+        )
+        logger.info(f"Publishing {product_id}: running build_package.py")
+        client = _ssh_connect()
+        _, stdout, stderr = client.exec_command(build_cmd, timeout=300)
+        out = stdout.read().decode("utf-8", errors="replace").strip()
+        err = stderr.read().decode("utf-8", errors="replace").strip()
+        client.close()
+
+        if err:
+            logger.warning(f"publish build stderr: {err[:500]}")
+
+        # Parse JSON from last line
+        result_line = out.strip().split("\n")[-1] if out.strip() else ""
+        try:
+            build_result = json.loads(result_line)
+        except Exception:
+            logger.error(f"publish build bad output: {out[-500:]}")
+            return {"success": False, "detail": f"Build script failed: {out[-300:]}"}
+
+        if not build_result.get("success"):
+            return {"success": False, "detail": build_result.get("detail", "Build failed")}
+
+        preview_filenames = build_result["preview_filenames"]
+        preview_image = build_result["preview_image"]
+        pdf_filename = build_result["pdf_filename"]
+
+        logger.info(f"Build complete: {len(preview_filenames)} previews, pdf={pdf_filename}")
+
+        # ── Step 2: Create product via Phyllis admin API ─────────
+        phyllis_token = os.getenv("PHYLLIS_ADMIN_TOKEN", "")
+        title_curl = title.replace("'", "'\\''")
+        desc_curl = description.replace("'", "'\\''")
+        tags_curl = tags.replace("'", "'\\''")
+        cat_curl = category.replace("'", "'\\''")
+        existing_imgs = ",".join(preview_filenames)
+
+        curl_cmd = (
+            f"curl -s -w '\\n%{{http_code}}' -X POST http://127.0.0.1:8001/api/admin/product"
+            f" -H 'x-admin-token: {phyllis_token}'"
+            f" -F 'name={title_curl}'"
+            f" -F 'price_cents={int(price_cents)}'"
+            f" -F 'description={desc_curl}'"
+            f" -F 'tags={tags_curl}'"
+            f" -F 'category={cat_curl}'"
+            f" -F 'existing_images={existing_imgs}'"
+        )
+
+        # Attach the PDF file
+        private_dir = "/home/clarence/PhyllisDiAnneStudio-App/backend/private_assets"
+        curl_cmd += f' -F "pdf=@{private_dir}/{pdf_filename}"'
+
+        client = _ssh_connect()
+        _, stdout, stderr = client.exec_command(curl_cmd, timeout=60)
+        response_raw = stdout.read().decode("utf-8", errors="replace").strip()
+        err_output = stderr.read().decode("utf-8", errors="replace").strip()
+        client.close()
+
+        lines = response_raw.rsplit("\n", 1)
+        response_body = lines[0] if len(lines) > 1 else response_raw
+        http_code = lines[-1].strip() if len(lines) > 1 else "0"
+
+        if http_code.startswith("2"):
+            logger.info(f"Published to Phyllis site: HTTP {http_code}")
+        else:
+            logger.warning(f"Phyllis API HTTP {http_code}: {response_body[:500]}")
+            if err_output:
+                logger.warning(f"stderr: {err_output[:300]}")
+
+        # ── Step 3: Mark queue item as PUBLISHED ─────────────────
+        previews_json = json.dumps(preview_filenames)
+        _ssh_mongosh(
+            f'db.phyllis_bot_queue.updateOne({{_id:ObjectId("{product_id}")}},{{$set:{{status:"PUBLISHED",published_at:new Date(),preview_filenames:{previews_json},pdf_filename:"{pdf_filename}"}}}})'
+        )
+
+        if http_code.startswith("2"):
+            return {"success": True}
+        else:
+            return {"success": False, "detail": f"Build succeeded but Phyllis API returned HTTP {http_code}: {response_body[:200]}"}
+
+    except Exception as e:
+        tb = traceback.format_exc()
+        logger.error(f"review-queue publish: {e}\n{tb}")
+        return {"success": False, "detail": str(e)}
+
+
+@app.post("/api/phyllis/review-queue/{product_id}/redo")
+async def phyllis_review_queue_redo(product_id: str):
+    """Send product back for regeneration."""
+    try:
+        _ssh_mongosh(
+            f'db.phyllis_bot_queue.updateOne({{_id:ObjectId("{product_id}")}},{{$set:{{status:"REDO",updated_at:new Date()}}}})'
+        )
+        return {"success": True}
+    except Exception as e:
+        logger.error(f"review-queue redo: {e}")
+        return {"success": False, "detail": str(e)}
+
+
+@app.post("/api/phyllis/review-queue/{product_id}/deny")
+async def phyllis_review_queue_deny(product_id: str):
+    """Deny a queued product."""
+    try:
+        _ssh_mongosh(
+            f'db.phyllis_bot_queue.updateOne({{_id:ObjectId("{product_id}")}},{{$set:{{status:"DENIED",updated_at:new Date()}}}})'
+        )
+        return {"success": True}
+    except Exception as e:
+        logger.error(f"review-queue deny: {e}")
+        return {"success": False, "detail": str(e)}
+
+
+@app.post("/api/phyllis/review-queue/{product_id}/delete")
+async def phyllis_review_queue_delete(product_id: str):
+    """Permanently delete a queued product."""
+    try:
+        _ssh_mongosh(
+            f'db.phyllis_bot_queue.deleteOne({{_id:ObjectId("{product_id}")}})'
+        )
+        return {"success": True}
+    except Exception as e:
+        logger.error(f"review-queue delete: {e}")
+        return {"success": False, "detail": str(e)}
+
+
+@app.post("/api/phyllis/review-queue/{product_id}/build-package")
+async def phyllis_review_queue_build_package(product_id: str):
+    """Build mockup + watermark + PDF package via SSH."""
+    import traceback
+    try:
+        raw = _ssh_mongosh(
+            f'EJSON.stringify(db.phyllis_bot_queue.findOne({{_id:ObjectId("{product_id}")}}))'
+        )
+        if not raw:
+            return {"success": False, "detail": "Product not found"}
+        product = json.loads(raw)
+
+        image_paths = product.get("image_paths", [])
+        title = product.get("title", "Coloring Page")
+        theme = product.get("theme", "kawaii")
+
+        title_esc = title.replace("'", "'\\''")
+        theme_esc = theme.replace("'", "'\\''")
+        paths_json = json.dumps(image_paths).replace("'", "'\\''")
+
+        cmd = (
+            f"cd {BOT_DIR} && {BOT_PYTHON} build_package.py"
+            f" --item-id '{product_id}'"
+            f" --theme '{theme_esc}'"
+            f" --title '{title_esc}'"
+            f" --image-paths '{paths_json}'"
+        )
+        logger.info(f"Building package for {product_id}")
+        client = _ssh_connect()
+        _, stdout, stderr = client.exec_command(cmd, timeout=300)
+        out = stdout.read().decode("utf-8", errors="replace").strip()
+        err = stderr.read().decode("utf-8", errors="replace").strip()
+        client.close()
+
+        if err:
+            logger.warning(f"build-package stderr: {err}")
+
+        # Parse JSON result from last line of stdout
+        result_line = out.strip().split("\n")[-1] if out.strip() else ""
+        try:
+            result = json.loads(result_line)
+        except Exception:
+            logger.error(f"build-package bad output: {out}")
+            return {"success": False, "detail": f"Script output parse error: {out[-200:]}"}
+
+        if not result.get("success"):
+            return result
+
+        # Update MongoDB with mockup and PDF paths
+        mockup_path = result.get("mockup_path", "")
+        pdf_path = result.get("pdf_path", "")
+        watermarked = result.get("watermarked_paths", [])
+        wm_json = json.dumps(watermarked).replace('"', '\\"')
+
+        update_js = (
+            f'db.phyllis_bot_queue.updateOne({{_id:ObjectId("{product_id}")}}, '
+            f'{{$set: {{"mockup_path":"{mockup_path}", "pdf_path":"{pdf_path}", '
+            f'"watermarked_paths":{json.dumps(watermarked)}, '
+            f'"updated_at": new Date()}}}})'
+        )
+        _ssh_mongosh(update_js)
+        logger.info(f"build-package done for {product_id}: mockup={mockup_path}")
+
+        return {
+            "success": True,
+            "mockup_path": mockup_path,
+            "pdf_path": pdf_path,
+        }
+    except Exception as e:
+        tb = traceback.format_exc()
+        logger.error(f"build-package error: {e}\n{tb}")
+        return {"success": False, "detail": f"{type(e).__name__}: {e}"}
+
+
+@app.post("/api/phyllis/review-queue/{product_id}/mockup")
+async def phyllis_review_queue_mockup(product_id: str, colorize: bool = True):
+    """Generate (or regenerate) a mockup for a queued product via SSH."""
+    try:
+        raw = _ssh_mongosh(
+            f'EJSON.stringify(db.phyllis_bot_queue.findOne({{_id:ObjectId("{product_id}")}}))'
+        )
+        if not raw:
+            return {"success": False, "detail": "Product not found"}
+        product = json.loads(raw)
+
+        image_paths = product.get("image_paths", [])
+        if not image_paths:
+            return {"success": False, "detail": "No images on this product"}
+
+        title = product.get("title", "Coloring Page")
+        theme = product.get("theme", "kawaii")
+        product_type = product.get("product_type", "single")
+
+        # Escape for shell
+        title_esc = title.replace("'", "'\\''")
+        theme_esc = theme.replace("'", "'\\''")
+        images_str = " ".join(image_paths)
+
+        colorize_flag = " --colorize" if colorize else ""
+        cmd = (
+            f"cd {BOT_DIR} && {BOT_PYTHON} mockup_generator.py"
+            f" --images {images_str}"
+            f" --title '{title_esc}'"
+            f" --theme '{theme_esc}'"
+            f" --type {product_type}"
+            f"{colorize_flag}"
+        )
+        logger.info(f"Running mockup generation for {product_id}")
+        client = _ssh_connect()
+        _, stdout, stderr = client.exec_command(cmd, timeout=300)
+        out = stdout.read().decode("utf-8", errors="replace").strip()
+        err = stderr.read().decode("utf-8", errors="replace").strip()
+        client.close()
+
+        # Parse mockup path from output: "Mockup saved: /path/to/file.png"
+        mockup_path = ""
+        for line in out.split("\n"):
+            if line.startswith("Mockup saved:"):
+                mockup_path = line.split(":", 1)[1].strip()
+                break
+
+        if not mockup_path:
+            logger.warning(f"Mockup generation output: {out[:500]} | stderr: {err[:500]}")
+            return {"success": False, "detail": "Mockup generation did not produce output"}
+
+        # Update MongoDB with mockup_path
+        _ssh_mongosh(
+            f'db.phyllis_bot_queue.updateOne({{_id:ObjectId("{product_id}")}},{{$set:{{mockup_path:"{mockup_path}",updated_at:new Date()}}}})'
+        )
+
+        logger.info(f"Mockup generated for {product_id}: {mockup_path}")
+        return {"success": True, "mockup_path": mockup_path}
+
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        logger.error(f"review-queue mockup: {e}\n{tb}")
+        return {"success": False, "detail": f"{type(e).__name__}: {e}"}
+
+
+@app.get("/api/phyllis/review-queue/{product_id}/download-zip")
+async def phyllis_review_queue_download_zip(product_id: str):
+    """Download all B&W images for a product as a zip file."""
+    import io
+    import zipfile
+    from fastapi.responses import Response
+
+    try:
+        raw = _ssh_mongosh(
+            f'EJSON.stringify(db.phyllis_bot_queue.findOne({{_id:ObjectId("{product_id}")}},{{image_paths:1,theme:1,product_type:1}}))'
+        )
+        if not raw:
+            return Response(content=b"", status_code=404)
+        doc = json.loads(raw)
+        paths = doc.get("image_paths", [])
+        if not paths:
+            return Response(content=b"", status_code=404)
+
+        theme = doc.get("theme", "pages").lower().replace(" ", "-").replace("'", "")
+        product_type = doc.get("product_type", "bundle")
+        zip_filename = f"{theme}_{product_type}_pages.zip"
+
+        client = _ssh_connect()
+        sftp = client.open_sftp()
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+            for i, remote_path in enumerate(paths):
+                try:
+                    with sftp.file(remote_path, "rb") as f:
+                        data = f.read()
+                    zf.writestr(f"page_{i + 1}.png", data)
+                except Exception as e:
+                    logger.warning(f"download-zip: skipping {remote_path}: {e}")
+
+        sftp.close()
+        client.close()
+
+        return Response(
+            content=buf.getvalue(),
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{zip_filename}"'},
+        )
+    except Exception as e:
+        logger.error(f"review-queue download-zip: {e}")
+        return Response(content=b"", status_code=500)
+
+
+@app.get("/api/phyllis/review-queue/mockup/{product_id}")
+async def phyllis_review_queue_mockup_preview(product_id: str):
+    """Serve a product mockup image from CLAWBOT via SFTP."""
+    from fastapi.responses import Response
+
+    cache_key = f"mockup:{product_id}"
+    now = time.time()
+    if cache_key in _review_preview_cache:
+        data, ts = _review_preview_cache[cache_key]
+        if now - ts < 60:
+            return Response(content=data, media_type="image/png",
+                          headers={"Cache-Control": "public, max-age=60"})
+
+    try:
+        raw = _ssh_mongosh(
+            f'EJSON.stringify(db.phyllis_bot_queue.findOne({{_id:ObjectId("{product_id}")}},{{mockup_path:1}}))'
+        )
+        if not raw:
+            return Response(content=b"", status_code=404)
+        doc = json.loads(raw)
+        mockup_path = doc.get("mockup_path", "")
+        if not mockup_path:
+            return Response(content=b"", status_code=404)
+
+        client = _ssh_connect()
+        sftp = client.open_sftp()
+        with sftp.file(mockup_path, "rb") as f:
+            data = f.read()
+        sftp.close()
+        client.close()
+
+        _review_preview_cache[cache_key] = (data, now)
+        for k in list(_review_preview_cache.keys()):
+            if now - _review_preview_cache[k][1] > 300:
+                del _review_preview_cache[k]
+
+        return Response(content=data, media_type="image/png",
+                       headers={"Cache-Control": "public, max-age=60"})
+    except Exception as e:
+        logger.error(f"review-queue mockup preview: {e}")
+        return Response(content=b"", status_code=404)
+
+
+@app.get("/api/phyllis/review-queue/preview/{product_id}/{index}")
+async def phyllis_review_queue_preview(product_id: str, index: int):
+    """Serve a product image from CLAWBOT via SFTP."""
+    from fastapi.responses import Response
+
+    cache_key = f"rq:{product_id}:{index}"
+    now = time.time()
+    if cache_key in _review_preview_cache:
+        data, ts = _review_preview_cache[cache_key]
+        if now - ts < 60:
+            return Response(content=data, media_type="image/jpeg",
+                          headers={"Cache-Control": "public, max-age=60"})
+
+    try:
+        # Get image path from MongoDB
+        raw = _ssh_mongosh(
+            f'EJSON.stringify(db.phyllis_bot_queue.findOne({{_id:ObjectId("{product_id}")}},{{image_paths:1}}))'
+        )
+        if not raw:
+            return Response(content=b"", status_code=404)
+        doc = json.loads(raw)
+        paths = doc.get("image_paths", [])
+        if index >= len(paths):
+            return Response(content=b"", status_code=404)
+
+        remote_path = paths[index]
+        client = _ssh_connect()
+        sftp = client.open_sftp()
+        with sftp.file(remote_path, "rb") as f:
+            data = f.read()
+        sftp.close()
+        client.close()
+
+        _review_preview_cache[cache_key] = (data, now)
+        for k in list(_review_preview_cache.keys()):
+            if now - _review_preview_cache[k][1] > 300:
+                del _review_preview_cache[k]
+
+        media = "image/png" if remote_path.endswith(".png") else "image/jpeg"
+        return Response(content=data, media_type=media,
+                       headers={"Cache-Control": "public, max-age=60"})
+    except Exception as e:
+        logger.error(f"review-queue preview: {e}")
+        return Response(content=b"", status_code=404)
 
 
 if __name__ == "__main__":
