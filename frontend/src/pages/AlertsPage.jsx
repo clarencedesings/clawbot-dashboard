@@ -5,6 +5,7 @@ import {
   Info,
   XCircle,
   CheckCircle,
+  CreditCard,
   X,
 } from 'lucide-react'
 
@@ -33,6 +34,10 @@ const SEVERITY_CONFIG = {
     icon: Info,
     countBg: 'bg-blue-500',
   },
+}
+
+const TYPE_ICONS = {
+  STRIPE: CreditCard,
 }
 
 const FILTERS = ['ALL', 'CRITICAL', 'WARNING', 'ERROR', 'INFO']
@@ -138,7 +143,7 @@ export default function AlertsPage() {
         <div className="space-y-3">
           {filtered.map((alert) => {
             const cfg = SEVERITY_CONFIG[alert.severity] || SEVERITY_CONFIG.info
-            const Icon = cfg.icon
+            const Icon = TYPE_ICONS[alert.type] || cfg.icon
             return (
               <div
                 key={alert.id}

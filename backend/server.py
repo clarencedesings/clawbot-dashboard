@@ -954,10 +954,57 @@ def ssh_read_alerts() -> list[dict]:
     return alerts
 
 
+def check_stripe_health() -> list:
+    """Check for stale 'initiated' payment transactions in both Earthlie and Phyllis."""
+    alerts = []
+    try:
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=30)
+        cutoff_str = cutoff.isoformat()
+
+        # Check Earthlie orders
+        earthlie_raw = _ssh_mongosh(
+            f'EJSON.stringify(db.getSiblingDB("earthlie_store").orders.find({{status:"initiated", created_at:{{$lt: new Date("{cutoff_str}")}}}}, {{_id:1,created_at:1}}).toArray())'
+        )
+        if earthlie_raw and earthlie_raw != "[]":
+            earthlie_stuck = json.loads(earthlie_raw)
+            if earthlie_stuck:
+                alerts.append({
+                    "id": "stripe_earthlie_stuck",
+                    "type": "STRIPE",
+                    "severity": "critical",
+                    "message": f"{len(earthlie_stuck)} Earthlie order(s) stuck in 'initiated' for 30+ minutes — webhook may be failing",
+                    "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+                    "count": len(earthlie_stuck),
+                })
+
+        # Check Phyllis payments
+        phyllis_raw = _ssh_mongosh(
+            f'EJSON.stringify(db.payment_transactions.find({{payment_status:"initiated", created_at:{{$lt: new Date("{cutoff_str}")}}}}, {{_id:1,created_at:1}}).toArray())'
+        )
+        if phyllis_raw and phyllis_raw != "[]":
+            phyllis_stuck = json.loads(phyllis_raw)
+            if phyllis_stuck:
+                alerts.append({
+                    "id": "stripe_phyllis_stuck",
+                    "type": "STRIPE",
+                    "severity": "critical",
+                    "message": f"{len(phyllis_stuck)} Phyllis payment(s) stuck in 'initiated' for 30+ minutes — webhook may be failing",
+                    "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"),
+                    "count": len(phyllis_stuck),
+                })
+    except Exception as e:
+        logger.error(f"check_stripe_health: {e}")
+    return alerts
+
+
 @app.get("/api/alerts")
 async def get_alerts():
     alerts = ssh_read_alerts()
-    return {"alerts": alerts}
+    stripe_alerts = check_stripe_health()
+    dismissed = _load_dismissed()
+    stripe_alerts = [a for a in stripe_alerts if a["id"] not in dismissed]
+    all_alerts = stripe_alerts + alerts
+    return {"alerts": all_alerts}
 
 
 @app.post("/api/alerts/{alert_id}/dismiss")
