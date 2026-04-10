@@ -3524,6 +3524,97 @@ async def canva_drop_upload(folder_name: str, request: Request):
         return {"success": False, "error": str(e)}
 
 
+@app.post("/api/phyllis/review-queue/{product_id}/upload-edited")
+async def phyllis_upload_edited_pngs(product_id: str, request: Request):
+    """
+    Upload Canva-edited PNGs directly to the canva-drop folder for a queue item.
+    Auto-names files: first uploaded = cover.png, rest = page_1.png, page_2.png etc.
+    """
+    try:
+        raw = _ssh_mongosh(
+            f'EJSON.stringify(db.phyllis_bot_queue.findOne({{_id: ObjectId("{product_id}")}}))'
+        )
+        if not raw:
+            return JSONResponse({"error": "Item not found"}, status_code=404)
+        doc = json.loads(raw)
+        if isinstance(doc.get("_id"), dict):
+            doc["_id"] = doc["_id"]["$oid"]
+
+        theme = doc.get("theme", "")
+        product_type = doc.get("product_type", "")
+
+        # Build folder slug same way as bot.py
+        import re
+        theme_slug = theme.lower().replace(" ", "-").replace("'", "").replace('"', "")
+        # Make folder unique per product type to avoid collisions
+        folder_name = f"{theme_slug}-{product_type}" if product_type else theme_slug
+
+        # Determine if journal/planner (has cover) or coloring (no cover)
+        journal_planner_types = {
+            "journal", "journal_single", "journal_five", "journal_ten",
+            "planner_single", "planner_five", "planner_ten"
+        }
+        has_cover = product_type in journal_planner_types
+
+        form = await request.form()
+        files = []
+        for key in form:
+            field = form[key]
+            if hasattr(field, "filename") and field.filename:
+                if field.filename.lower().endswith(".png"):
+                    content = await field.read()
+                    if len(content) > 20 * 1024 * 1024:
+                        continue
+                    files.append((field.filename, content))
+
+        if not files:
+            return JSONResponse({"error": "No PNG files received"}, status_code=400)
+
+        # Sort files by original filename so order is predictable
+        files.sort(key=lambda x: x[0])
+
+        # Auto-name: if has_cover, first file = cover.png, rest = page_N.png
+        # If no cover (coloring), all files = page_N.png
+        named = []
+        if has_cover:
+            named.append((files[0][0], files[0][1], "cover.png"))
+            for i, (orig, content) in enumerate(files[1:], 1):
+                named.append((orig, content, f"page_{i}.png"))
+        else:
+            for i, (orig, content) in enumerate(files, 1):
+                named.append((orig, content, f"page_{i}.png"))
+
+        # Ensure canva-drop folder exists and upload via SFTP
+        CANVA_DROP_DIR = "/home/clarence/phyllis-imagebot/canva-drop"
+        folder_path = f"{CANVA_DROP_DIR}/{folder_name}"
+
+        client = _ssh_connect()
+        sftp = client.open_sftp()
+
+        # Create folder if needed
+        try:
+            sftp.stat(folder_path)
+        except FileNotFoundError:
+            sftp.mkdir(folder_path)
+
+        uploaded = []
+        for orig, content, save_name in named:
+            remote_path = f"{folder_path}/{save_name}"
+            with sftp.file(remote_path, "wb") as f:
+                f.write(content)
+            uploaded.append(save_name)
+            logger.info(f"Uploaded edited PNG: {remote_path}")
+
+        sftp.close()
+        client.close()
+
+        return {"success": True, "uploaded": uploaded, "folder": folder_name}
+
+    except Exception as e:
+        logger.error(f"upload-edited: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 @app.delete("/api/phyllis/canva-drop/folders/{folder_name}/{filename}")
 async def canva_drop_delete_file(folder_name: str, filename: str):
     """Delete a single file from a theme folder."""
@@ -3658,6 +3749,7 @@ async def phyllis_bot_run(request: Request):
     category = body.get("category", "coloring_pages")
     generate = body.get("generate", "all")
     mode = body.get("mode", "ideogram")
+    planner_type = body.get("planner_type", "daily_planner")
 
     if not theme:
         return {"success": False, "detail": "Theme is required"}
@@ -3667,6 +3759,7 @@ async def phyllis_bot_run(request: Request):
     safe_category = re.sub(r'[^a-z_]', '', category)
     safe_generate = re.sub(r'[^a-z_]', '', generate)
     safe_mode = re.sub(r'[^a-z]', '', mode)
+    safe_planner_type = re.sub(r'[^a-z_]', '', planner_type)
 
     try:
         client = _ssh_connect()
@@ -3689,6 +3782,7 @@ async def phyllis_bot_run(request: Request):
             f' --category "{safe_category}"'
             f' --types "{safe_generate}"'
             f' --mode "{safe_mode}"'
+            f' --planner-type "{safe_planner_type}"'
             f" > {BOT_DIR}/bot_run.log 2>&1 &"
         )
         client.exec_command(cmd, timeout=5)
@@ -3899,7 +3993,7 @@ async def phyllis_review_queue_publish(product_id: str):
         image_paths = product.get("image_paths", [])
         title = product.get("title", "Coloring Page")
         theme = product.get("theme", "kawaii")
-        product_type = product.get("product_type", "single")
+        product_type = product.get("product_type", "coloring_page")
 
         price_cents = product.get("price_cents", 0)
         if isinstance(price_cents, dict):
@@ -3915,7 +4009,7 @@ async def phyllis_review_queue_publish(product_id: str):
         # ── Step 1: Run build_package.py on CLAWBOT ──────────────
         title_esc = title.replace("'", "'\\''")
         theme_esc = theme.replace("'", "'\\''")
-        paths_json = json.dumps(image_paths).replace("'", "'\\''")
+        paths_json = "[]"
 
         build_cmd = (
             f"cd {BOT_DIR} && {BOT_PYTHON} build_package.py"
@@ -3968,6 +4062,7 @@ async def phyllis_review_queue_publish(product_id: str):
             f" -F 'description={desc_curl}'"
             f" -F 'tags={tags_curl}'"
             f" -F 'category={cat_curl}'"
+            f" -F 'product_type={product_type}'"
             f" -F 'existing_images={existing_imgs}'"
         )
 
@@ -4060,20 +4155,21 @@ async def phyllis_review_queue_build_package(product_id: str):
             return {"success": False, "detail": "Product not found"}
         product = json.loads(raw)
 
-        image_paths = product.get("image_paths", [])
         title = product.get("title", "Coloring Page")
         theme = product.get("theme", "kawaii")
+        product_type = product.get("product_type", "coloring_page")
 
         title_esc = title.replace("'", "'\\''")
         theme_esc = theme.replace("'", "'\\''")
-        paths_json = json.dumps(image_paths).replace("'", "'\\''")
+        image_paths_arg = "[]"
 
         cmd = (
             f"cd {BOT_DIR} && {BOT_PYTHON} build_package.py"
             f" --item-id '{product_id}'"
             f" --theme '{theme_esc}'"
             f" --title '{title_esc}'"
-            f" --image-paths '{paths_json}'"
+            f" --product-type '{product_type}'"
+            f" --image-paths '{image_paths_arg}'"
         )
         logger.info(f"Building package for {product_id}")
         client = _ssh_connect()
@@ -4096,25 +4192,33 @@ async def phyllis_review_queue_build_package(product_id: str):
         if not result.get("success"):
             return result
 
-        # Update MongoDB with mockup and PDF paths
-        mockup_path = result.get("mockup_path", "")
-        pdf_path = result.get("pdf_path", "")
-        watermarked = result.get("watermarked_paths", [])
-        wm_json = json.dumps(watermarked).replace('"', '\\"')
+        # Update MongoDB with preview and PDF filenames
+        preview_image = result.get("preview_image", "")
+        pdf_filename = result.get("pdf_filename", "")
+        preview_filenames = result.get("preview_filenames", [])
 
+        mockup_path = f"/home/clarence/PhyllisDiAnneStudio-App/public_assets/previews/{preview_image}" if preview_image else ""
         update_js = (
             f'db.phyllis_bot_queue.updateOne({{_id:ObjectId("{product_id}")}}, '
-            f'{{$set: {{"mockup_path":"{mockup_path}", "pdf_path":"{pdf_path}", '
-            f'"watermarked_paths":{json.dumps(watermarked)}, '
+            f'{{$set: {{"mockup_path":"{mockup_path}", "preview_image":"{preview_image}", '
+            f'"pdf_filename":"{pdf_filename}", '
+            f'"preview_filenames":{json.dumps(preview_filenames)}, '
             f'"updated_at": new Date()}}}})'
         )
         _ssh_mongosh(update_js)
-        logger.info(f"build-package done for {product_id}: mockup={mockup_path}")
+
+        # Clear mockup cache so new image is served immediately
+        cache_key = f"mockup:{product_id}"
+        if cache_key in _review_preview_cache:
+            del _review_preview_cache[cache_key]
+
+        logger.info(f"build-package done for {product_id}: preview={preview_image}, pdf={pdf_filename}")
 
         return {
             "success": True,
-            "mockup_path": mockup_path,
-            "pdf_path": pdf_path,
+            "preview_image": preview_image,
+            "pdf_filename": pdf_filename,
+            "preview_filenames": preview_filenames,
         }
     except Exception as e:
         tb = traceback.format_exc()
@@ -4139,7 +4243,7 @@ async def phyllis_review_queue_mockup(product_id: str, colorize: bool = True):
 
         title = product.get("title", "Coloring Page")
         theme = product.get("theme", "kawaii")
-        product_type = product.get("product_type", "single")
+        product_type = product.get("product_type", "coloring_page")
 
         # Escape for shell
         title_esc = title.replace("'", "'\\''")
@@ -4215,11 +4319,18 @@ async def phyllis_review_queue_download_zip(product_id: str):
 
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-            for i, remote_path in enumerate(paths):
+            interior_count = 0
+            for remote_path in paths:
                 try:
                     with sftp.file(remote_path, "rb") as f:
                         data = f.read()
-                    zf.writestr(f"page_{i + 1}.png", data)
+                    path_str = str(remote_path)
+                    if "_cover" in path_str:
+                        arc_name = "cover.png"
+                    else:
+                        interior_count += 1
+                        arc_name = f"page_{interior_count}.png"
+                    zf.writestr(arc_name, data)
                 except Exception as e:
                     logger.warning(f"download-zip: skipping {remote_path}: {e}")
 
@@ -4234,6 +4345,47 @@ async def phyllis_review_queue_download_zip(product_id: str):
     except Exception as e:
         logger.error(f"review-queue download-zip: {e}")
         return Response(content=b"", status_code=500)
+
+
+@app.get("/api/phyllis/review-queue/{product_id}/download-pdf")
+async def phyllis_review_queue_download_pdf(product_id: str):
+    """Download the built PDF for a queue item via SFTP."""
+    import io
+    from fastapi.responses import Response, JSONResponse
+    try:
+        raw = _ssh_mongosh(
+            f'EJSON.stringify(db.phyllis_bot_queue.findOne({{_id: ObjectId("{product_id}")}}))'
+        )
+        if not raw:
+            return JSONResponse({"error": "Item not found"}, status_code=404)
+        doc = json.loads(raw)
+        if isinstance(doc.get("_id"), dict):
+            doc["_id"] = doc["_id"]["$oid"]
+
+        pdf_filename = doc.get("pdf_filename", "")
+        theme = doc.get("theme", "unknown")
+
+        if not pdf_filename:
+            return JSONResponse({"error": "PDF not built yet — run Build Mockup & Package first"}, status_code=404)
+
+        remote_path = f"/home/clarence/PhyllisDiAnneStudio-App/backend/private_assets/{pdf_filename}"
+
+        client = _ssh_connect()
+        sftp = client.open_sftp()
+        buf = io.BytesIO()
+        sftp.getfo(remote_path, buf)
+        sftp.close()
+        client.close()
+        buf.seek(0)
+
+        return Response(
+            content=buf.getvalue(),
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{pdf_filename}"'},
+        )
+    except Exception as e:
+        logger.error(f"download-pdf: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 
 @app.get("/api/phyllis/review-queue/mockup/{product_id}")

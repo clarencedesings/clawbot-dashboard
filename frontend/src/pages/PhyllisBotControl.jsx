@@ -16,13 +16,41 @@ const ROSE = '#d4948a'
 const CATEGORIES = [
   { value: 'coloring_pages', label: 'Coloring Pages' },
   { value: 'journals', label: 'Journals' },
+  { value: 'planners', label: 'Planners' },
 ]
 
-const GENERATE_OPTIONS = [
-  { value: 'single', label: 'Single page' },
-  { value: 'five_pack', label: '5-page bundle' },
-  { value: 'ten_pack', label: '10-page bundle' },
-  { value: 'all', label: 'All three' },
+const PLANNER_TYPES = [
+  { value: 'daily_planner', label: 'Daily Planner' },
+  { value: 'weekly_planner', label: 'Weekly Planner' },
+  { value: 'monthly_planner', label: 'Monthly Planner' },
+  { value: 'goals_planner', label: 'Goals Planner' },
+  { value: 'water_tracker', label: 'Water Tracker' },
+  { value: 'habit_tracker', label: 'Habit Tracker' },
+  { value: 'todo_list', label: 'To-Do List' },
+  { value: 'schedule_planner', label: 'Daily Schedule (6AM–11PM)' },
+  { value: 'exercise_planner', label: 'Exercise Planner' },
+  { value: 'faith_planner', label: 'Faith Planner' },
+  { value: 'bible_reading_planner', label: 'Bible Reading Planner' },
+  { value: 'custom', label: 'Custom (enter below)' },
+]
+
+const COLORING_GENERATE_OPTIONS = [
+  { value: 'single', label: 'Single Page' },
+  { value: 'five_pack', label: '5-Pack' },
+  { value: 'ten_pack', label: '10-Pack' },
+  { value: 'all', label: 'All Types' },
+]
+const JOURNAL_GENERATE_OPTIONS = [
+  { value: 'journal_single', label: 'Journal 1-Page' },
+  { value: 'journal_five', label: 'Journal 5-Page' },
+  { value: 'journal_ten', label: 'Journal 10-Page' },
+  { value: 'journals', label: 'All Journal Types' },
+]
+const PLANNER_GENERATE_OPTIONS = [
+  { value: 'planner_single', label: 'Planner 1-Page' },
+  { value: 'planner_five', label: 'Planner 5-Page' },
+  { value: 'planner_ten', label: 'Planner 10-Page' },
+  { value: 'planners', label: 'All Planner Types' },
 ]
 
 export default function PhyllisBotControl() {
@@ -34,6 +62,8 @@ export default function PhyllisBotControl() {
   const [logs, setLogs] = useState([])
   const [scheduleEnabled, setScheduleEnabled] = useState(false)
   const [scheduleTime, setScheduleTime] = useState('02:00')
+  const [plannerType, setPlannerType] = useState('daily_planner')
+  const [customPlannerType, setCustomPlannerType] = useState('')
   const [mode, setMode] = useState(() => localStorage.getItem('phyllis-bot-mode') || 'ideogram')
   const logRef = useRef(null)
   const logPollRef = useRef(null)
@@ -121,7 +151,15 @@ export default function PhyllisBotControl() {
       const resp = await fetch('/api/phyllis/bot/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ theme: theme.trim(), category, generate, mode }),
+        body: JSON.stringify({
+          theme: theme.trim(),
+          category,
+          generate,
+          mode,
+          planner_type: category === 'planners'
+            ? (plannerType === 'custom' ? customPlannerType : plannerType)
+            : '',
+        }),
       })
       const data = await resp.json()
       if (resp.ok) {
@@ -167,6 +205,11 @@ export default function PhyllisBotControl() {
     if (next <= now) next.setDate(next.getDate() + 1)
     return next.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) + ' at ' + scheduleTime
   }
+
+  const activeGenerateOptions =
+    category === 'journals' ? JOURNAL_GENERATE_OPTIONS :
+    category === 'planners' ? PLANNER_GENERATE_OPTIONS :
+    COLORING_GENERATE_OPTIONS
 
   const stateLabel = running ? 'Running' : botStatus.state === 'running' ? 'Running' : 'Idle'
   const stateColor = stateLabel === 'Running' ? 'bg-online pulse-online' : 'bg-text-dim'
@@ -291,7 +334,7 @@ export default function PhyllisBotControl() {
           <Play size={18} style={{ color: ROSE }} />
           <h3 className="text-white font-semibold">Run Bot Now</h3>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-4">
+        <div className={`grid grid-cols-1 gap-3 mb-4 ${category === 'planners' ? 'md:grid-cols-5' : 'md:grid-cols-4'}`}>
           <div>
             <label className="text-xs text-text-dim mb-1 block">Theme</label>
             <input
@@ -307,7 +350,13 @@ export default function PhyllisBotControl() {
             <label className="text-xs text-text-dim mb-1 block">Category</label>
             <select
               value={category}
-              onChange={e => setCategory(e.target.value)}
+              onChange={e => {
+                const val = e.target.value
+                setCategory(val)
+                if (val === 'journals') setGenerate('journal_single')
+                else if (val === 'planners') setGenerate('planner_single')
+                else setGenerate('single')
+              }}
               className="w-full bg-sidebar border border-border rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-[#d4948a] cursor-pointer"
               disabled={running}
             >
@@ -316,6 +365,31 @@ export default function PhyllisBotControl() {
               ))}
             </select>
           </div>
+          {category === 'planners' && (
+            <div>
+              <label className="text-xs text-text-dim mb-1 block">Planner Type</label>
+              <select
+                value={plannerType}
+                onChange={e => setPlannerType(e.target.value)}
+                className="w-full bg-sidebar border border-border rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-[#d4948a] cursor-pointer"
+                disabled={running}
+              >
+                {PLANNER_TYPES.map(pt => (
+                  <option key={pt.value} value={pt.value}>{pt.label}</option>
+                ))}
+              </select>
+              {plannerType === 'custom' && (
+                <input
+                  type="text"
+                  placeholder="Enter custom planner type..."
+                  value={customPlannerType}
+                  onChange={e => setCustomPlannerType(e.target.value)}
+                  className="w-full bg-sidebar border border-border rounded-lg px-3 py-2 text-sm text-white placeholder:text-text-dim/50 focus:outline-none focus:border-[#d4948a] mt-2"
+                  disabled={running}
+                />
+              )}
+            </div>
+          )}
           <div>
             <label className="text-xs text-text-dim mb-1 block">Generate</label>
             <select
@@ -324,7 +398,7 @@ export default function PhyllisBotControl() {
               className="w-full bg-sidebar border border-border rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-[#d4948a] cursor-pointer"
               disabled={running}
             >
-              {GENERATE_OPTIONS.map(g => (
+              {activeGenerateOptions.map(g => (
                 <option key={g.value} value={g.value}>{g.label}</option>
               ))}
             </select>

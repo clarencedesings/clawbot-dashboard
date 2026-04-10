@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   CheckCircle,
   RefreshCw,
@@ -23,12 +23,19 @@ const TYPE_LABELS = {
   single: 'Single',
   five_pack: '5-Pack',
   ten_pack: '10-Pack',
+  journal_single: 'Journal 1-Page',
+  journal_five: 'Journal 5-Page',
+  journal_ten: 'Journal 10-Page',
+  planner_single: 'Planner 1-Page',
+  planner_five: 'Planner 5-Page',
+  planner_ten: 'Planner 10-Page',
 }
 
 const FILTER_TABS = [
   { value: 'all', label: 'All' },
   { value: 'coloring_pages', label: 'Coloring Pages' },
   { value: 'journals', label: 'Journals' },
+  { value: 'planners', label: 'Planners' },
 ]
 
 function formatDate(dateStr) {
@@ -146,6 +153,8 @@ export default function PhyllisReviewQueue() {
   const [mockupLoading, setMockupLoading] = useState({})
   const [mockupUrls, setMockupUrls] = useState({})
   const [packageLoading, setPackageLoading] = useState({})
+  const [uploadingEdited, setUploadingEdited] = useState({})
+  const editedUploadRefs = useRef({})
 
   const fetchQueue = useCallback(() => {
     setLoading(true)
@@ -205,6 +214,30 @@ export default function PhyllisReviewQueue() {
     setMockupLoading(prev => ({ ...prev, [productId]: false }))
   }
 
+  const handleUploadEdited = async (itemId, files) => {
+    if (!files || files.length === 0) return
+    setUploadingEdited(prev => ({ ...prev, [itemId]: true }))
+    const formData = new FormData()
+    Array.from(files).forEach((file, i) => {
+      formData.append(`file_${i}`, file)
+    })
+    try {
+      const res = await fetch(`/api/phyllis/review-queue/${itemId}/upload-edited`, {
+        method: 'POST',
+        body: formData,
+      })
+      const data = await res.json()
+      if (data.success) {
+        alert(`Uploaded ${data.uploaded.length} file(s): ${data.uploaded.join(', ')}\n\nNow click "Build Mockup & Package" to rebuild.`)
+      } else {
+        alert('Upload failed: ' + (data.error || 'Unknown error'))
+      }
+    } catch (err) {
+      alert('Upload error: ' + err.message)
+    }
+    setUploadingEdited(prev => ({ ...prev, [itemId]: false }))
+  }
+
   const handleBuildPackage = async (productId) => {
     setPackageLoading(prev => ({ ...prev, [productId]: true }))
     try {
@@ -212,7 +245,7 @@ export default function PhyllisReviewQueue() {
       const data = await resp.json()
       if (data.success) {
         setMockupUrls(prev => ({ ...prev, [productId]: `/api/phyllis/review-queue/mockup/${productId}?t=${Date.now()}` }))
-        setProducts(prev => prev.map(p => p._id === productId ? { ...p, mockup_path: data.mockup_path, pdf_path: data.pdf_path } : p))
+        setProducts(prev => prev.map(p => p._id === productId ? { ...p, mockup_path: data.mockup_path, pdf_filename: data.pdf_filename, _cache: Date.now() } : p))
       }
     } catch {}
     setPackageLoading(prev => ({ ...prev, [productId]: false }))
@@ -278,6 +311,8 @@ export default function PhyllisReviewQueue() {
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {filtered.map(product => {
             const isColoring = product.category === 'coloring_pages' || product.category === 'kawaii'
+            const isPlanner = product.category === 'planners' || (product.product_type || '').startsWith('planner')
+            const isJournalOrPlanner = ['journal_single','journal_five','journal_ten'].includes(product.product_type) || isPlanner
             const catColor = isColoring ? ROSE : SAGE
             const currentAction = actionLoading[product._id]
             const descExpanded = expandedDesc[product._id]
@@ -288,7 +323,7 @@ export default function PhyllisReviewQueue() {
                 <div className="aspect-[4/3] bg-sidebar relative">
                   {(mockupUrls[product._id] || product.mockup_path) ? (
                     <img
-                      src={mockupUrls[product._id] || `/api/phyllis/review-queue/mockup/${product._id}`}
+                      src={mockupUrls[product._id] || `/api/phyllis/review-queue/mockup/${product._id}?t=${product._cache || ''}`}
                       alt={`${product.title} mockup`}
                       className="w-full h-full object-contain bg-white/5"
                     />
@@ -326,7 +361,7 @@ export default function PhyllisReviewQueue() {
                       className="text-[10px] font-medium uppercase tracking-wider px-2 py-0.5 rounded-full"
                       style={{ background: `${catColor}22`, color: catColor }}
                     >
-                      {isColoring ? 'Coloring' : 'Journal'}
+                      {isColoring ? 'Coloring' : isPlanner ? 'Planner' : 'Journal'}
                     </span>
                     {product.status === 'PUBLISHED' && (
                       <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400">
@@ -396,7 +431,48 @@ export default function PhyllisReviewQueue() {
                         onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
                       >
                         <Download size={12} />
-                        Download B&W Images
+                        {isJournalOrPlanner ? '↓ Download PNGs' : '↓ Download B&W Images'}
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Upload Edited PNGs */}
+                  <div className="mb-2" style={{ position: 'relative' }}>
+                    <input
+                      type="file"
+                      accept=".png"
+                      multiple
+                      style={{ display: 'none' }}
+                      ref={el => editedUploadRefs.current[product._id] = el}
+                      onChange={e => { handleUploadEdited(product._id, e.target.files); e.target.value = '' }}
+                    />
+                    <button
+                      onClick={() => editedUploadRefs.current[product._id]?.click()}
+                      disabled={uploadingEdited[product._id]}
+                      className="w-full flex items-center justify-center gap-2 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer border disabled:opacity-60 disabled:cursor-not-allowed"
+                      style={{ borderColor: '#55555580', color: uploadingEdited[product._id] ? '#888' : '#ccc' }}
+                      onMouseEnter={e => { if (!uploadingEdited[product._id]) e.currentTarget.style.background = 'rgba(255,255,255,0.05)' }}
+                      onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                    >
+                      {uploadingEdited[product._id]
+                        ? <><Loader2 size={12} className="animate-spin" /> Uploading...</>
+                        : <><Download size={12} style={{ transform: 'rotate(180deg)' }} /> Upload Edited PNGs</>
+                      }
+                    </button>
+                  </div>
+
+                  {/* Download PDF */}
+                  {product.pdf_filename && (
+                    <div className="mb-2">
+                      <button
+                        onClick={() => window.open(`/api/phyllis/review-queue/${product._id}/download-pdf`, '_blank')}
+                        className="w-full flex items-center justify-center gap-2 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer border"
+                        style={{ borderColor: `${ROSE}30`, color: `${ROSE}99` }}
+                        onMouseEnter={e => e.currentTarget.style.background = `${ROSE}10`}
+                        onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                      >
+                        <Download size={12} />
+                        Download PDF
                       </button>
                     </div>
                   )}

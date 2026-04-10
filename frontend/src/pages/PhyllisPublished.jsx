@@ -19,6 +19,9 @@ const TYPE_LABELS = {
   single: 'Single',
   five_pack: '5-Pack',
   ten_pack: '10-Pack',
+  journal_single: 'Journal 1-Page',
+  journal_five: 'Journal 5-Page',
+  journal_ten: 'Journal 10-Page',
 }
 
 const FILTER_TABS = [
